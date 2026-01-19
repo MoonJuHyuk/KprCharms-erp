@@ -7,23 +7,30 @@ import os
 import time
 import altair as alt
 
-# --- 1. 구글 시트 연결 ---
+# --- 1. 구글 시트 연결 (ID로 정확하게 연결 수정됨) ---
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    
+    # 🔴 파트너님의 구글 시트 고유 ID (수정됨)
+    spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
+    
     try:
+        # 1. Streamlit Cloud 배포 환경 (Secrets 사용)
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
             client = gspread.authorize(creds)
-            return client.open('Factory_DB')
+            return client.open_by_key(spreadsheet_id) # ID로 연결
     except Exception: pass
 
+    # 2. 로컬 개발 환경 (key.json 사용)
     key_file = 'key.json'
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
         client = gspread.authorize(creds)
-        return client.open('Factory_DB')
+        return client.open_by_key(spreadsheet_id) # ID로 연결
+    
     return None
 
 doc = get_connection()
