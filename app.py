@@ -12,7 +12,7 @@ import altair as alt
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     
-    # 파트너님의 구글 시트 ID (수정됨)
+    # 파트너님의 구글 시트 ID
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
     
     try:
@@ -134,9 +134,14 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
     return js_code
 
 # --- 5. 메인 앱 ---
-st.set_page_config(page_title="KPR ERP", layout="wide")
+# 👇 [수정됨] page_icon="logo.png" 추가!
+if os.path.exists("logo.png"):
+    st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
+else:
+    st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
-# 🔒 [보안] 로그인 시스템 (여기서부터 추가된 코드입니다)
+
+# 🔒 [보안] 로그인 시스템
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
 
 if not st.session_state["authenticated"]:
@@ -147,15 +152,14 @@ if not st.session_state["authenticated"]:
     with c1:
         pw = st.text_input("접속 암호를 입력하세요", type="password")
         if st.button("로그인"):
-            if pw == "kpr1234":  # 👈 [비밀번호 설정] 여기를 바꾸시면 됩니다!
+            if pw == "kpr1234":  # 비밀번호
                 st.session_state["authenticated"] = True
                 st.success("로그인 성공!")
                 time.sleep(0.5)
                 st.rerun()
             else:
                 st.error("암호가 틀렸습니다.")
-    
-    st.stop() # 🛑 암호를 통과 못하면 여기서 코드가 멈춥니다 (아래 내용 안 보임)
+    st.stop()
 # -----------------------------------------------------------
 
 df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
