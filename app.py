@@ -7,12 +7,12 @@ import os
 import time
 import altair as alt
 
-# --- 1. 구글 시트 연결 (ID로 정확하게 연결 수정됨) ---
+# --- 1. 구글 시트 연결 ---
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     
-    # 🔴 파트너님의 구글 시트 고유 ID (수정됨)
+    # 파트너님의 구글 시트 ID (수정됨)
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
     
     try:
@@ -21,7 +21,7 @@ def get_connection():
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
             client = gspread.authorize(creds)
-            return client.open_by_key(spreadsheet_id) # ID로 연결
+            return client.open_by_key(spreadsheet_id)
     except Exception: pass
 
     # 2. 로컬 개발 환경 (key.json 사용)
@@ -29,7 +29,7 @@ def get_connection():
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
         client = gspread.authorize(creds)
-        return client.open_by_key(spreadsheet_id) # ID로 연결
+        return client.open_by_key(spreadsheet_id)
     
     return None
 
@@ -135,6 +135,29 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
 
 # --- 5. 메인 앱 ---
 st.set_page_config(page_title="KPR ERP", layout="wide")
+
+# 🔒 [보안] 로그인 시스템 (여기서부터 추가된 코드입니다)
+if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    st.title("🔒 KPR ERP 시스템")
+    st.write("관계자 외 접속을 제한합니다.")
+    
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        pw = st.text_input("접속 암호를 입력하세요", type="password")
+        if st.button("로그인"):
+            if pw == "kpr1234":  # 👈 [비밀번호 설정] 여기를 바꾸시면 됩니다!
+                st.session_state["authenticated"] = True
+                st.success("로그인 성공!")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error("암호가 틀렸습니다.")
+    
+    st.stop() # 🛑 암호를 통과 못하면 여기서 코드가 멈춥니다 (아래 내용 안 보임)
+# -----------------------------------------------------------
+
 df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
 
 if 'cart' not in st.session_state: st.session_state['cart'] = []
