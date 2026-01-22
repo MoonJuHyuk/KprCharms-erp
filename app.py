@@ -6,6 +6,7 @@ import datetime
 import os
 import time
 import altair as alt
+import base64
 
 # --- 1. 구글 시트 연결 ---
 @st.cache_resource
@@ -133,13 +134,30 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
     """
     return js_code
 
+# [앱 아이콘 강제 적용 함수]
+def add_apple_touch_icon(image_path):
+    try:
+        with open(image_path, "rb") as f:
+            img_data = f.read()
+            b64_icon = base64.b64encode(img_data).decode("utf-8")
+            st.markdown(
+                f"""
+                <head>
+                <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}">
+                <link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}">
+                </head>
+                """,
+                unsafe_allow_html=True
+            )
+    except Exception: pass
+
 # --- 5. 메인 앱 ---
-# 👇 [수정됨] page_icon="logo.png" 추가!
+# Page Config
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
+    add_apple_touch_icon("logo.png")
 else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
-
 
 # 🔒 [보안] 로그인 시스템
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
@@ -479,30 +497,87 @@ elif menu == "영업/출고 관리":
                         st.components.v1.html(html_pl, height=500, scrolling=True)
 
                     with c2:
-                        st.markdown("### 🏷️ Pallet Labels")
-                        labels_html = ""
-                        for plt_num, group in dp.groupby('팔레트번호'):
-                            p_sum = group['수량'].sum()
-                            svg_content = f"""
-                            <div class="page-break">
-                                <svg viewBox="0 0 800 600" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-                                    <polygon points="400,20 780,300 400,580 20,300" fill="none" stroke="#003366" stroke-width="15"/>
-                                    <foreignObject x="100" y="120" width="600" height="120">
-                                        <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Arial, sans-serif; font-size: 35px; font-weight: bold; text-align: center; word-wrap: break-word; display: flex; justify-content: center; align-items: center; height: 100%;">
-                                            {cli}
-                                        </div>
-                                    </foreignObject>
-                                    <text x="400" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="80" font-weight="900" fill="black">KPR</text>
-                                    <text x="400" y="365" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="bold">{plt_num}/{tot_plt}</text>
-                                    <text x="400" y="425" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="bold">MADE IN KOREA</text>
-                                </svg>
-                            </div>
-                            """
-                            labels_html += svg_content
-                        btn_lbl = create_print_button(labels_html, "Diamond Labels", "landscape")
-                        st.components.v1.html(btn_lbl, height=50)
-                        preview_html = labels_html.replace('width="100%" height="100%"', 'width="100%" height="300px"')
-                        st.components.v1.html(preview_html, height=500, scrolling=True)
+                        st.markdown("### 🏷️ 라벨 선택 인쇄")
+                        
+                        # [1] 기존 다이아몬드 라벨
+                        with st.expander("🔷 다이아몬드 라벨 (기존)", expanded=True):
+                            labels_html_diamond = ""
+                            for plt_num, group in dp.groupby('팔레트번호'):
+                                p_sum = group['수량'].sum()
+                                svg_content = f"""
+                                <div class="page-break">
+                                    <svg viewBox="0 0 800 600" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                                        <polygon points="400,20 780,300 400,580 20,300" fill="none" stroke="#003366" stroke-width="15"/>
+                                        <foreignObject x="100" y="120" width="600" height="120">
+                                            <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Arial, sans-serif; font-size: 35px; font-weight: bold; text-align: center; word-wrap: break-word; display: flex; justify-content: center; align-items: center; height: 100%;">
+                                                {cli}
+                                            </div>
+                                        </foreignObject>
+                                        <text x="400" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="80" font-weight="900" fill="black">KPR</text>
+                                        <text x="400" y="365" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="bold">{plt_num}/{tot_plt}</text>
+                                        <text x="400" y="425" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="bold">MADE IN KOREA</text>
+                                    </svg>
+                                </div>
+                                """
+                                labels_html_diamond += svg_content
+                            
+                            btn_lbl_d = create_print_button(labels_html_diamond, "Diamond Labels", "landscape")
+                            st.components.v1.html(btn_lbl_d, height=50)
+                            
+                            # 미리보기 (높이 조절)
+                            preview_diamond = labels_html_diamond.replace('width="100%" height="100%"', 'width="100%" height="250px"')
+                            st.caption("▼ 미리보기")
+                            st.components.v1.html(preview_diamond, height=300, scrolling=True)
+
+                        # [2] 신규 표준 텍스트 라벨
+                        with st.expander("📄 표준 텍스트 라벨 (신규)", expanded=True):
+                            labels_html_text = ""
+                            for plt_num, group in dp.groupby('팔레트번호'):
+                                p_qty = group['수량'].sum()
+                                p_code = group.iloc[0]['코드']
+                                
+                                label_div = f"""
+                                <div class="page-break" style="
+                                    border: 3px solid black; 
+                                    margin: 20px auto;
+                                    width: 95%; 
+                                    height: 95vh; 
+                                    display: flex; 
+                                    flex-direction: column; 
+                                    justify-content: space-evenly; 
+                                    align-items: center; 
+                                    text-align: center;
+                                    font-family: 'Times New Roman', serif;
+                                    font-weight: bold;
+                                    padding: 20px;
+                                    box-sizing: border-box;
+                                ">
+                                    <div style="font-size: 60px; text-transform: uppercase; width:100%;">
+                                        {cli}
+                                    </div>
+                                    <div style="width: 80%; display: flex; justify-content: space-between; font-size: 70px; margin: 50px 0;">
+                                        <span>{p_code}</span>
+                                        <span>{p_qty:,.0f}KG</span>
+                                    </div>
+                                    <div style="font-size: 40px; width: 100%;">
+                                        <div style="margin-bottom: 30px;">&lt;PLASTIC ABRASIVE MEDIA&gt;</div>
+                                        <div style="margin-bottom: 15px;">PLT # : {plt_num}/{tot_plt}</div>
+                                        <div>TOTAL : {p_qty:,.0f} KG</div>
+                                    </div>
+                                </div>
+                                """
+                                labels_html_text += label_div
+
+                            btn_lbl_t = create_print_button(labels_html_text, "Standard Labels", "portrait")
+                            st.components.v1.html(btn_lbl_t, height=50)
+                            
+                            # 미리보기
+                            preview_text = labels_html_text.replace('height: 95vh;', 'height: 300px; border: 2px solid #ccc; margin-bottom: 20px;')
+                            preview_text = preview_text.replace('font-size: 60px;', 'font-size: 20px;')
+                            preview_text = preview_text.replace('font-size: 70px;', 'font-size: 24px;')
+                            preview_text = preview_text.replace('font-size: 40px;', 'font-size: 14px;')
+                            st.caption("▼ 미리보기")
+                            st.components.v1.html(preview_text, height=400, scrolling=True)
 
     with tab_out:
         st.subheader("🚚 출고 확정 및 재고 차감")
