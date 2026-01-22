@@ -191,6 +191,10 @@ elif menu == "재고/생산 관리":
 
         if not df_items.empty:
             df_f = df_items.copy()
+            # 데이터 문자열 변환 (필터링 오류 방지)
+            for c in ['규격', '타입', '색상', '품목명']:
+                if c in df_f.columns: df_f[c] = df_f[c].astype(str)
+
             if cat=="입고": df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
             
@@ -208,22 +212,29 @@ elif menu == "재고/생산 관리":
                 grp = st.selectbox("1.그룹", sorted(df_f['Group'].unique()))
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
+                
+                # 🔥 [수정] 모든 선택 단계에서 문자열(str)로 강제 변환하여 비교
                 if grp == "반제품":
-                    p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].astype(str).unique()))
+                    p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].unique()))
                     final = df_step1[df_step1['품목명']==p_name]
                 elif grp == "COMPOUND":
-                    clr = st.selectbox("2.색상", sorted(df_step1['색상'].astype(str).unique()))
+                    clr = st.selectbox("2.색상", sorted(df_step1['색상'].unique()))
                     final = df_step1[df_step1['색상']==clr]
                 elif cat == "입고":
-                    spc = st.selectbox("2.규격", sorted(df_step1['규격'].astype(str).unique())) if len(df_step1['규격'].unique())>1 else None
+                    spc = st.selectbox("2.규격", sorted(df_step1['규격'].unique())) if len(df_step1['규격'].unique())>1 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    typ = st.selectbox("2.타입", sorted(df_step1['타입'].astype(str).unique()))
+                    # 일반 제품 (KA, KG)
+                    typ = st.selectbox("2.타입", sorted(df_step1['타입'].unique()))
                     df_step2 = df_step1[df_step1['타입']==typ]
-                    clr = st.selectbox("3.색상", sorted(df_step2['색상'].astype(str).unique()))
-                    df_step3 = df_step2[df_step2['색상']==clr]
-                    spc = st.selectbox("4.규격", sorted(df_step3['규격'].astype(str).unique()))
-                    final = df_step3[df_step3['규격']==spc]
+                    
+                    if not df_step2.empty:
+                        clr = st.selectbox("3.색상", sorted(df_step2['색상'].unique()))
+                        df_step3 = df_step2[df_step2['색상']==clr]
+                        
+                        if not df_step3.empty:
+                            spc = st.selectbox("4.규격", sorted(df_step3['규격'].unique()))
+                            final = df_step3[df_step3['규격']==spc]
                 
                 if not final.empty:
                     item_info = final.iloc[0]; sel_code = item_info['코드']
@@ -232,6 +243,9 @@ elif menu == "재고/생산 관리":
                         inv_rows = df_inventory[df_inventory['코드'].astype(str)==str(sel_code)]
                         sys_q = inv_rows['현재고'].apply(safe_float).sum()
                         st.info(f"전산 재고(통합): {sys_q}")
+                else:
+                    st.warning("⚠️ 선택 가능한 품목이 없습니다.")
+                    item_info = None # 선택 실패 시 명시적 None
         
         qty_in = st.number_input("수량") if cat != "재고실사" else 0.0
         note_in = st.text_input("비고")
@@ -241,9 +255,8 @@ elif menu == "재고/생산 관리":
             note_in = f"[실사] {note_in}"
             
         if st.button("저장"):
-            # 🔥 [수정] 아이템 선택 여부 확인 (에러 방지)
             if item_info is None:
-                st.error("🚨 품목이 선택되지 않았습니다. 위에서 품목을 먼저 선택해주세요.")
+                st.error("🚨 품목이 선택되지 않았습니다. 위에서 품목을 정확히 선택해주세요.")
             elif sheet_logs:
                 try:
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
