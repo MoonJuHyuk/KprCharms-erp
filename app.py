@@ -17,7 +17,6 @@ def get_connection():
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
     
     try:
-        # 1. Streamlit Cloud 배포 환경 (Secrets 사용)
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
@@ -25,7 +24,6 @@ def get_connection():
             return client.open_by_key(spreadsheet_id)
     except Exception: pass
 
-    # 2. 로컬 개발 환경 (key.json 사용)
     key_file = 'key.json'
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
@@ -238,17 +236,17 @@ elif menu == "재고/생산 관리":
         
         sel_code=None; item_info=None; sys_q=0.0
         
-        # [NEW] 생산일 경우 라인 선택 (공장별 맞춤 설정 - 수정됨)
+        # [NEW] 생산일 경우 라인 선택 (공장별 맞춤 설정)
         prod_line = "-"
         if cat == "생산":
             line_options = []
             if factory == "1공장":
-                # 1공장: 압출1호 ~ 5호 (range(1, 6) -> 1,2,3,4,5)
+                # 1공장: 압출1호 ~ 5호
                 line_options = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
             elif factory == "2공장":
                 # 2공장: 압출1호~6호 + 컷팅1호~10호
-                ext_lines = [f"압출{i}호" for i in range(1, 7)] # 1~6
-                cut_lines = [f"컷팅{i}호" for i in range(1, 11)] # 1~10
+                ext_lines = [f"압출{i}호" for i in range(1, 7)]
+                cut_lines = [f"컷팅{i}호" for i in range(1, 11)]
                 line_options = ext_lines + cut_lines + ["기타"]
             
             prod_line = st.selectbox("설비 라인", line_options)
@@ -257,8 +255,11 @@ elif menu == "재고/생산 관리":
             df_f = df_items.copy()
             df_f['Group'] = df_f['품목명'].apply(lambda x: "KG" if "KG" in str(x).upper() else ("KA" if "KA" in str(x).upper() else ("COMPOUND" if "CP" in str(x).upper() else str(x))))
             
-            if cat=="입고": df_f = df_f[df_f['구분']=='원자재']
-            elif cat=="생산": df_f = df_f[df_f['구분'].isin(['제품','완제품'])]
+            if cat=="입고": 
+                df_f = df_f[df_f['구분']=='원자재']
+            elif cat=="생산": 
+                # 🔥 [수정됨] 제품, 완제품 뿐만 아니라 '반제품'도 포함!
+                df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
             
             if not df_f.empty:
                 grp = st.selectbox("1.그룹", sorted(df_f['Group'].unique()))
@@ -307,6 +308,7 @@ elif menu == "재고/생산 관리":
                             req = qty_in * safe_float(r['소요량'])
                             update_inventory(factory, r['자재코드'], -req)
                             time.sleep(0.5) 
+                            # BOM 차감 시에도 라인 정보 기록
                             sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{sel_code} 생산", "-", prod_line])
                     st.cache_data.clear(); st.success("완료"); st.rerun()
                 except Exception as e: st.error(f"오류: {e}")
