@@ -12,26 +12,19 @@ import base64
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    
-    # 파트너님의 구글 시트 ID
-    spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
-    
+    spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk" # 파트너님 시트 ID
     try:
-        # 1. Streamlit Cloud 배포 환경 (Secrets 사용)
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
             client = gspread.authorize(creds)
             return client.open_by_key(spreadsheet_id)
     except Exception: pass
-
-    # 2. 로컬 개발 환경 (key.json 사용)
     key_file = 'key.json'
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(spreadsheet_id)
-    
     return None
 
 doc = get_connection()
@@ -102,7 +95,6 @@ def get_shape(code, df_items):
 # 🔥 팝업 인쇄 버튼 생성 함수
 def create_print_button(html_content, title="Print", orientation="portrait"):
     safe_content = html_content.replace('`', '\`').replace('$', '\$')
-    
     page_css = "@page { size: A4 portrait; margin: 1cm; }"
     if orientation == "landscape":
         page_css = "@page { size: A4 landscape; margin: 1cm; }"
@@ -134,64 +126,47 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
     """
     return js_code
 
-# [앱 아이콘 강제 적용 함수]
 def add_apple_touch_icon(image_path):
     try:
         with open(image_path, "rb") as f:
             img_data = f.read()
             b64_icon = base64.b64encode(img_data).decode("utf-8")
             st.markdown(
-                f"""
-                <head>
+                f"""<head>
                 <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}">
                 <link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}">
-                </head>
-                """,
-                unsafe_allow_html=True
+                </head>""", unsafe_allow_html=True
             )
     except Exception: pass
 
-# --- 5. 메인 앱 ---
-# Page Config
+# --- 5. 메인 앱 설정 ---
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
     add_apple_touch_icon("logo.png")
 else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
-# 🔒 [보안] 로그인 시스템
+# 🔒 로그인
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
-
 if not st.session_state["authenticated"]:
     st.title("🔒 KPR ERP 시스템")
-    st.write("관계자 외 접속을 제한합니다.")
-    
     c1, c2 = st.columns([1, 2])
     with c1:
-        pw = st.text_input("접속 암호를 입력하세요", type="password")
+        pw = st.text_input("접속 암호", type="password")
         if st.button("로그인"):
-            if pw == "kpr1234":  # 비밀번호
-                st.session_state["authenticated"] = True
-                st.success("로그인 성공!")
-                time.sleep(0.5)
-                st.rerun()
-            else:
-                st.error("암호가 틀렸습니다.")
+            if pw == "kpr1234":
+                st.session_state["authenticated"] = True; st.rerun()
+            else: st.error("암호가 틀렸습니다.")
     st.stop()
-# -----------------------------------------------------------
 
 df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
-
 if 'cart' not in st.session_state: st.session_state['cart'] = []
-if 'bom_unlocked' not in st.session_state: st.session_state['bom_unlocked'] = False
 
+# --- 사이드바 ---
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     else: st.header("🏭 KPR / Chamstek")
-    
-    if st.button("🔄 새로고침"):
-        st.cache_data.clear()
-        st.rerun()
+    if st.button("🔄 새로고침"): st.cache_data.clear(); st.rerun()
     st.markdown("---")
     menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색"])
     st.markdown("---")
@@ -210,12 +185,8 @@ if menu == "대시보드":
         out = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
         k1.metric("오늘 생산", f"{prod:,.0f} kg")
         k2.metric("오늘 출고", f"{out:,.0f} kg")
-        
-        pend = 0
-        if not df_orders.empty and '상태' in df_orders.columns:
-            pend = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique())
+        pend = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
         k3.metric("출고 대기 주문", f"{pend} 건", delta="작업 필요", delta_color="inverse")
-        
         st.markdown("---")
         if '구분' in df_logs.columns:
             df_prod = df_logs[df_logs['구분'] == '생산'].copy()
@@ -224,11 +195,6 @@ if menu == "대시보드":
                 daily_prod = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜').tail(7)
                 chart = alt.Chart(daily_prod).mark_bar().encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
-        st.markdown("---")
-        st.subheader("📉 최근 재고 실사/조정 이력")
-        df_audit = df_logs[df_logs['구분'].isin(['재고실사', '재고조정'])].copy()
-        if not df_audit.empty: st.dataframe(df_audit.tail(5).sort_index(ascending=False), use_container_width=True)
-        else: st.info("재고 실사 기록이 없습니다.")
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
@@ -237,10 +203,15 @@ elif menu == "재고/생산 관리":
         cat = st.selectbox("구분", ["입고", "생산", "이동", "재고실사"])
         
         sel_code=None; item_info=None; sys_q=0.0
+        
+        # [NEW] 생산일 경우 라인 선택 기능 추가
+        prod_line = "-"
+        if cat == "생산":
+            prod_line = st.selectbox("설비 라인", ["압출1호", "압출2호", "압출3호", "압출4호", "기타"])
+
         if not df_items.empty:
             df_f = df_items.copy()
             df_f['Group'] = df_f['품목명'].apply(lambda x: "KG" if "KG" in str(x).upper() else ("KA" if "KA" in str(x).upper() else ("COMPOUND" if "CP" in str(x).upper() else str(x))))
-            
             if cat=="입고": df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": df_f = df_f[df_f['구분'].isin(['제품','완제품'])]
             
@@ -282,7 +253,8 @@ elif menu == "재고/생산 관리":
         if st.button("저장"):
             if sheet_logs:
                 try:
-                    sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-"])
+                    # [NEW] 마지막 컬럼에 prod_line(라인정보) 저장
+                    sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, prod_line])
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
                     if cat=="생산" and not df_bom.empty:
@@ -296,7 +268,7 @@ elif menu == "재고/생산 관리":
 
     st.title(f"📦 재고/생산 관리 ({factory})")
     
-    t1, t2, t3, t4, t5 = st.tabs(["📦 재고 현황", "🏭 생산 기록", "📜 로그", "🔩 BOM", "📊 분석/실사"])
+    t1, t2, t3, t4, t5 = st.tabs(["📦 재고 현황", "🏭 생산 기록(검색/인쇄)", "📜 전체 로그", "🔩 BOM", "📊 분석/실사"])
     
     with t1:
         if not df_inventory.empty:
@@ -312,7 +284,119 @@ elif menu == "재고/생산 관리":
                 if cat_f=="제품": df_v = df_v[df_v['구분'].isin(['제품','완제품'])]
                 else: df_v = df_v[df_v['구분']==cat_f]
             st.dataframe(df_v, use_container_width=True)
-    with t2: st.dataframe(df_logs[df_logs['구분']=='생산'] if not df_logs.empty else pd.DataFrame(), use_container_width=True)
+    
+    # [NEW] 생산 기록 검색 및 인쇄 기능
+    with t2:
+        st.subheader("🔍 생산 이력 검색 및 인쇄")
+        if df_logs.empty:
+            st.info("로그 데이터가 없습니다.")
+        else:
+            # 생산 데이터만 필터링
+            df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
+            
+            # '라인' 컬럼이 없는 옛날 데이터 처리 (L열이 비어있을 경우 대비)
+            if '라인' not in df_prod_log.columns:
+                # 데이터프레임의 마지막 컬럼을 '라인'으로 가정하거나, 없으면 빈값 처리
+                if len(df_prod_log.columns) >= 12:
+                    # 12번째 컬럼(인덱스 11) 이름을 강제로 '라인'으로 변경 시도 (헤더가 있다면)
+                    cols = list(df_prod_log.columns)
+                    cols[11] = '라인' 
+                    df_prod_log.columns = cols
+                else:
+                    df_prod_log['라인'] = "-"
+
+            # 모든 데이터를 문자열로 변환 (검색 오류 방지)
+            for col in ['코드', '품목명', '라인']:
+                if col in df_prod_log.columns:
+                    df_prod_log[col] = df_prod_log[col].astype(str)
+
+            # --- 검색 필터 ---
+            with st.expander("🔎 검색 옵션 (클릭해서 열기)", expanded=True):
+                c_s1, c_s2, c_s3, c_s4 = st.columns(4)
+                
+                # 1. 날짜 범위
+                min_dt = pd.to_datetime(df_prod_log['날짜']).min().date() if not df_prod_log.empty else datetime.date.today()
+                sch_date = c_s1.date_input("날짜 범위", [min_dt, datetime.date.today()])
+                
+                # 2. 라인 선택
+                all_lines = ["전체"] + sorted(df_prod_log['라인'].unique().tolist())
+                sch_line = c_s2.selectbox("라인 선택", all_lines)
+                
+                # 3. 품목 코드/명 검색
+                sch_code = c_s3.text_input("품목 코드/명 검색")
+                
+                # 4. 공장
+                sch_fac = c_s4.selectbox("공장 필터", ["전체", "1공장", "2공장"])
+
+            # --- 필터링 로직 ---
+            df_res = df_prod_log.copy()
+            
+            # 날짜
+            if len(sch_date) == 2:
+                s_d, e_d = sch_date
+                df_res['날짜'] = pd.to_datetime(df_res['날짜'])
+                df_res = df_res[(df_res['날짜'].dt.date >= s_d) & (df_res['날짜'].dt.date <= e_d)]
+                df_res['날짜'] = df_res['날짜'].dt.strftime('%Y-%m-%d')
+            
+            # 라인
+            if sch_line != "전체":
+                df_res = df_res[df_res['라인'] == sch_line]
+            
+            # 품목
+            if sch_code:
+                df_res = df_res[
+                    df_res['코드'].str.contains(sch_code, case=False) | 
+                    df_res['품목명'].str.contains(sch_code, case=False)
+                ]
+            
+            # 공장
+            if sch_fac != "전체":
+                df_res = df_res[df_res['공장'] == sch_fac]
+
+            # --- 결과 표시 및 인쇄 ---
+            st.write(f"📋 검색 결과: {len(df_res)}건")
+            
+            # 보여줄 컬럼 정리
+            disp_cols = ['날짜', '시간', '공장', '라인', '코드', '품목명', '수량', '비고']
+            final_cols = [c for c in disp_cols if c in df_res.columns]
+            
+            st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True)
+            
+            # 총 생산량 합계
+            total_prod = df_res['수량'].sum() if not df_res.empty else 0
+            st.metric("총 생산량 (검색 결과)", f"{total_prod:,.0f} KG")
+
+            # 인쇄 버튼
+            if not df_res.empty:
+                # HTML 테이블 생성
+                html_table = f"""
+                <h2 style='text-align:center;'>생산 실적 기록서</h2>
+                <p style='text-align:center;'>기간: {sch_date[0]} ~ {sch_date[1] if len(sch_date)>1 else sch_date[0]} | 라인: {sch_line}</p>
+                <table style='width:100%; border-collapse: collapse; font-size: 12px; text-align: center;' border='1'>
+                    <thead>
+                        <tr style='background-color: #f2f2f2;'>
+                            <th>날짜</th><th>시간</th><th>공장</th><th>라인</th><th>코드</th><th>품목명</th><th>수량(KG)</th><th>비고</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                """
+                for _, row in df_res.sort_values(['날짜', '시간']).iterrows():
+                    line_val = row.get('라인', '-')
+                    html_table += f"<tr><td>{row['날짜']}</td><td>{row['시간']}</td><td>{row['공장']}</td><td>{line_val}</td><td>{row['코드']}</td><td>{row['품목명']}</td><td style='text-align:right;'>{row['수량']:,.0f}</td><td>{row['비고']}</td></tr>"
+                
+                html_table += f"""
+                    </tbody>
+                    <tfoot>
+                        <tr style='font-weight:bold; background-color: #f2f2f2;'>
+                            <td colspan='6'>합계</td>
+                            <td style='text-align:right;'>{total_prod:,.0f}</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+                """
+                st.components.v1.html(create_print_button(html_table, "Production Report"), height=50)
+
     with t3: st.dataframe(df_logs, use_container_width=True)
     with t4: st.dataframe(df_bom, use_container_width=True)
     with t5:
@@ -374,8 +458,6 @@ elif menu == "영업/출고 관리":
                             cw += load; rem -= load
                     try:
                         time.sleep(1)
-                        # 헤더에 LOT번호가 없으면 처리 (Optional)
-                        pass 
                         for r in rows: sheet_orders.append_row(r)
                         st.session_state['cart'] = []; st.cache_data.clear(); st.success("저장 완료"); st.rerun()
                     except Exception as e: st.error(f"저장 실패: {e}")
@@ -392,26 +474,17 @@ elif menu == "영업/출고 관리":
                     return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
 
                 tgt = st.selectbox("수정/삭제할 주문 선택", pend['주문번호'].unique(), format_func=format_ord)
-                
                 original_df = pend[pend['주문번호']==tgt].copy()
                 if not df_items.empty:
                     code_to_type = df_items.set_index('코드')['타입'].to_dict()
                     original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
                 else: original_df['타입'] = "-"
-                
-                # 🔥 [수정] LOT번호가 없으면 컬럼 생성
-                if 'LOT번호' not in original_df.columns:
-                    original_df['LOT번호'] = ""
+                if 'LOT번호' not in original_df.columns: original_df['LOT번호'] = ""
 
                 editor_cols = ['팔레트번호', '코드', '품목명', '타입', '수량', 'LOT번호', '비고']
                 edited_df = st.data_editor(
-                    original_df[editor_cols], 
-                    num_rows="dynamic", 
-                    key="pallet_editor", 
-                    use_container_width=True, 
-                    disabled=["타입"]
+                    original_df[editor_cols], num_rows="dynamic", key="pallet_editor", use_container_width=True, disabled=["타입"]
                 )
-                
                 c_edit1, c_edit2 = st.columns([1, 1])
                 with c_edit1:
                     if st.button("💾 수정사항 저장", type="primary"):
@@ -432,12 +505,9 @@ elif menu == "영업/출고 관리":
                                 if 'LOT번호' not in headers: headers.append('LOT번호')
                                 update_values = [headers]
                                 for r in final_data: update_values.append([r.get(h, "") for h in headers])
-                                sheet_orders.clear()
-                                time.sleep(1)
-                                sheet_orders.update(update_values)
+                                sheet_orders.clear(); time.sleep(1); sheet_orders.update(update_values)
                                 st.cache_data.clear(); st.success("수정 완료!"); time.sleep(2); st.rerun()
                             except Exception as e: st.error(f"오류: {e}")
-                
                 with c_edit2:
                     if st.button("🗑️ 이 주문 전체 삭제"):
                         with st.spinner("삭제 중..."):
@@ -448,12 +518,9 @@ elif menu == "영업/출고 관리":
                                 headers = list(all_records[0].keys()) if all_records else ['주문번호', '날짜', '거래처', '코드', '품목명', '수량', '팔레트번호', '상태', '비고']
                                 update_values = [headers]
                                 for r in remaining_data: update_values.append([r.get(h, "") for h in headers])
-                                sheet_orders.clear()
-                                time.sleep(1)
-                                sheet_orders.update(update_values)
+                                sheet_orders.clear(); time.sleep(1); sheet_orders.update(update_values)
                                 st.cache_data.clear(); st.success("삭제 완료!"); time.sleep(2); st.rerun()
                             except Exception as e: st.error(f"오류: {e}")
-
             else: st.info("대기 중인 주문이 없습니다.")
 
     with tab_prt:
@@ -498,8 +565,6 @@ elif menu == "영업/출고 관리":
 
                     with c2:
                         st.markdown("### 🏷️ 라벨 선택 인쇄")
-                        
-                        # [1] 기존 다이아몬드 라벨
                         with st.expander("🔷 다이아몬드 라벨 (기존)", expanded=True):
                             labels_html_diamond = ""
                             for plt_num, group in dp.groupby('팔레트번호'):
@@ -520,62 +585,28 @@ elif menu == "영업/출고 관리":
                                 </div>
                                 """
                                 labels_html_diamond += svg_content
-                            
                             btn_lbl_d = create_print_button(labels_html_diamond, "Diamond Labels", "landscape")
                             st.components.v1.html(btn_lbl_d, height=50)
-                            
-                            # 미리보기 (높이 조절)
                             preview_diamond = labels_html_diamond.replace('width="100%" height="100%"', 'width="100%" height="250px"')
                             st.caption("▼ 미리보기")
                             st.components.v1.html(preview_diamond, height=300, scrolling=True)
 
-                        # [2] 신규 표준 텍스트 라벨 (수정됨: 간격 좁힘, 중앙정렬)
                         with st.expander("📄 표준 텍스트 라벨 (신규)", expanded=True):
                             labels_html_text = ""
                             for plt_num, group in dp.groupby('팔레트번호'):
                                 p_qty = group['수량'].sum()
                                 p_code = group.iloc[0]['코드']
-                                
                                 label_div = f"""
-                                <div class="page-break" style="
-                                    border: none;
-                                    width: 100%;
-                                    height: 95vh;
-                                    display: flex;
-                                    flex-direction: column;
-                                    justify-content: center;
-                                    align-items: center;
-                                    text-align: center;
-                                    font-family: 'Times New Roman', serif;
-                                    font-weight: bold;
-                                    padding: 10px;
-                                    box-sizing: border-box;
-                                ">
-                                    <div style="font-size: 50px; text-transform: uppercase; width:100%; margin-bottom: 40px;">
-                                        {cli}
-                                    </div>
-
-                                    <div style="width: 100%; display: flex; justify-content: center; gap: 100px; font-size: 50px; margin-bottom: 40px;">
-                                        <span>{p_code}</span>
-                                        <span>{p_qty:,.0f}KG</span>
-                                    </div>
-
-                                    <div style="font-size: 45px; width: 100%; line-height: 1.6;">
-                                        <div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div>
-                                        <div>PLT # : {plt_num}/{tot_plt}</div>
-                                        <div>TOTAL : {p_qty:,.0f} KG</div>
-                                    </div>
+                                <div class="page-break" style="border: none; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; font-family: 'Times New Roman', serif; font-weight: bold; padding: 10px; box-sizing: border-box;">
+                                    <div style="font-size: 50px; text-transform: uppercase; width:100%; margin-bottom: 40px;">{cli}</div>
+                                    <div style="width: 100%; display: flex; justify-content: center; gap: 100px; font-size: 50px; margin-bottom: 40px;"><span>{p_code}</span><span>{p_qty:,.0f}KG</span></div>
+                                    <div style="font-size: 45px; width: 100%; line-height: 1.6;"><div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div><div>PLT # : {plt_num}/{tot_plt}</div><div>TOTAL : {p_qty:,.0f} KG</div></div>
                                 </div>
                                 """
                                 labels_html_text += label_div
-                            
                             btn_lbl_t = create_print_button(labels_html_text, "Standard Labels", "landscape")
                             st.components.v1.html(btn_lbl_t, height=50)
-                            
-                            # 미리보기
-                            preview_text = labels_html_text.replace('height: 95vh;', 'height: 300px; border: 1px dashed #ccc; margin-bottom: 20px;')
-                            preview_text = preview_text.replace('font-size: 50px;', 'font-size: 20px;')
-                            preview_text = preview_text.replace('font-size: 45px;', 'font-size: 18px;')
+                            preview_text = labels_html_text.replace('height: 95vh;', 'height: 300px; border: 1px dashed #ccc; margin-bottom: 20px;').replace('font-size: 50px;', 'font-size: 20px;').replace('font-size: 45px;', 'font-size: 18px;')
                             st.caption("▼ 미리보기")
                             st.components.v1.html(preview_text, height=400, scrolling=True)
 
@@ -590,23 +621,18 @@ elif menu == "영업/출고 관리":
                 def format_ord_out(ord_id):
                     info = order_dict_out.get(ord_id)
                     return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
-
                 tgt_out = st.selectbox("출고할 주문 선택", pend['주문번호'].unique(), format_func=format_ord_out, key="out_sel")
-                
                 d_out = pend[pend['주문번호']==tgt_out].copy()
                 if not df_items.empty:
                     code_to_type = df_items.set_index('코드')['타입'].to_dict()
                     d_out['타입'] = d_out['코드'].map(code_to_type).fillna('-')
                 else: d_out['타입'] = "-"
-                
                 cols_to_show = ['코드','품목명','타입','수량','팔레트번호']
                 if 'LOT번호' in d_out.columns: cols_to_show.append('LOT번호')
                 st.write("▼ 출고 내역 확인")
                 st.dataframe(d_out[cols_to_show], use_container_width=True)
-                
                 total_w = d_out['수량'].sum()
                 st.metric("총 출고 중량", f"{total_w:,.0f} kg")
-                
                 if st.button("🚀 출고 확정 (재고 차감)", type="primary"):
                     with st.spinner("출고 처리 중..."):
                         try:
@@ -615,10 +641,7 @@ elif menu == "영업/출고 관리":
                                 itm_info = df_items[df_items['코드'].astype(str)==str(row['코드'])]
                                 p_nm="-"; p_sp="-"; p_ty="-"; p_co="-"
                                 if not itm_info.empty:
-                                    p_nm = itm_info.iloc[0]['품목명']
-                                    p_sp = itm_info.iloc[0]['규격']
-                                    p_ty = itm_info.iloc[0]['타입']
-                                    p_co = itm_info.iloc[0]['색상']
+                                    p_nm = itm_info.iloc[0]['품목명']; p_sp = itm_info.iloc[0]['규격']; p_ty = itm_info.iloc[0]['타입']; p_co = itm_info.iloc[0]['색상']
                                 sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], p_nm, p_sp, p_ty, p_co, -safe_float(row['수량']), f"주문출고({tgt_out})", "-"])
                                 time.sleep(0.5)
                             time.sleep(1)
@@ -636,10 +659,8 @@ elif menu == "영업/출고 관리":
 # [4] 현장 작업 (LOT 입력)
 elif menu == "🏭 현장 작업 (LOT 입력)":
     st.title("🏭 현장 작업: LOT 번호 입력")
-    st.caption("작업자는 할당된 팔레트 구성에 맞춰 LOT번호만 입력해주세요. (수량/품목 변경 불가)")
-    
+    st.caption("작업자는 할당된 팔레트 구성에 맞춰 LOT번호만 입력해주세요.")
     if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
-    
     if not df_orders.empty and '상태' in df_orders.columns:
         pend = df_orders[df_orders['상태']=='준비']
         if not pend.empty:
@@ -648,7 +669,6 @@ elif menu == "🏭 현장 작업 (LOT 입력)":
             def format_ord(ord_id):
                 info = order_dict.get(ord_id)
                 return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
-
             tgt = st.selectbox("작업할 주문 선택", pend['주문번호'].unique(), format_func=format_ord, key="wrk_sel")
             original_df = pend[pend['주문번호']==tgt].copy()
             if not df_items.empty:
@@ -656,13 +676,8 @@ elif menu == "🏭 현장 작업 (LOT 입력)":
                 original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
             else: original_df['타입'] = "-"
             if 'LOT번호' not in original_df.columns: original_df['LOT번호'] = ""
-
             editor_cols = ['팔레트번호', '코드', '품목명', '타입', '수량', 'LOT번호', '비고']
-            edited_df = st.data_editor(
-                original_df[editor_cols], num_rows="fixed", key="worker_editor", use_container_width=True, 
-                disabled=["팔레트번호", "코드", "품목명", "타입", "수량", "비고"]
-            )
-            
+            edited_df = st.data_editor(original_df[editor_cols], num_rows="fixed", key="worker_editor", use_container_width=True, disabled=["팔레트번호", "코드", "품목명", "타입", "수량", "비고"])
             if st.button("💾 LOT 정보 저장", type="primary"):
                 with st.spinner("저장 중..."):
                     try:
@@ -673,10 +688,7 @@ elif menu == "🏭 현장 작업 (LOT 입력)":
                         new_rows = []
                         for _, row in edited_df.iterrows():
                             new_rows.append({
-                                '주문번호': tgt, '날짜': base_info['날짜'], '거래처': base_info['거래처'], 
-                                '코드': row['코드'], '품목명': row['품목명'], '수량': row['수량'], 
-                                '팔레트번호': row['팔레트번호'], '상태': '준비', 
-                                '비고': row['비고'], 'LOT번호': row.get('LOT번호', '')
+                                '주문번호': tgt, '날짜': base_info['날짜'], '거래처': base_info['거래처'], '코드': row['코드'], '품목명': row['품목명'], '수량': row['수량'], '팔레트번호': row['팔레트번호'], '상태': '준비', '비고': row['비고'], 'LOT번호': row.get('LOT번호', '')
                             })
                         final_data = remaining_data + new_rows
                         time.sleep(1)
@@ -684,67 +696,40 @@ elif menu == "🏭 현장 작업 (LOT 입력)":
                         if 'LOT번호' not in headers: headers.append('LOT번호')
                         update_values = [headers]
                         for r in final_data: update_values.append([r.get(h, "") for h in headers])
-                        sheet_orders.clear()
-                        time.sleep(1)
-                        sheet_orders.update(update_values)
+                        sheet_orders.clear(); time.sleep(1); sheet_orders.update(update_values)
                         st.cache_data.clear(); st.success("작업 저장 완료!"); time.sleep(2); st.rerun()
                     except Exception as e: st.error(f"오류: {e}")
         else: st.info("작업 대기 중인 주문이 없습니다.")
 
-# 🔥 [5] 이력/LOT 검색 (신규)
+# [5] 이력/LOT 검색
 elif menu == "🔍 이력/LOT 검색":
     st.title("🔍 출고 이력 및 LOT 번호 검색")
-    
-    if df_orders.empty:
-        st.info("데이터가 없습니다.")
+    if df_orders.empty: st.info("데이터가 없습니다.")
     else:
-        # 🔥 [수정] 중요: 모든 데이터를 문자열로 변환하고 LOT번호 열 보장
         df_search = df_orders.copy()
-        
-        # LOT번호 열이 없으면 생성
-        if 'LOT번호' not in df_search.columns:
-            df_search['LOT번호'] = ""
-        
-        # 검색 대상 컬럼들을 강제로 문자열로 변환 (숫자/문자 혼용 방지)
+        if 'LOT번호' not in df_search.columns: df_search['LOT번호'] = ""
         for col in ['코드', '거래처', 'LOT번호']:
-            if col in df_search.columns:
-                df_search[col] = df_search[col].astype(str)
-
+            if col in df_search.columns: df_search[col] = df_search[col].astype(str)
         view_type = st.radio("조회 대상", ["출고 완료된 건만 보기", "전체 보기 (진행중 포함)"], horizontal=True)
         if view_type == "출고 완료된 건만 보기":
-            if '상태' in df_search.columns:
-                df_search = df_search[df_search['상태'] == '완료']
-        
+            if '상태' in df_search.columns: df_search = df_search[df_search['상태'] == '완료']
         with st.expander("🔎 검색 필터 열기", expanded=True):
             c1, c2, c3, c4 = st.columns(4)
             search_lot = c1.text_input("LOT 번호 (일부 입력 가능)")
-            
-            # 리스트 생성 시에도 문자열로 변환된 데이터 사용
             all_clients = ["전체"] + sorted(df_search['거래처'].unique().tolist())
             sel_client = c2.selectbox("거래처", all_clients)
-            
             all_items = ["전체"] + sorted(df_search['코드'].unique().tolist())
             sel_item = c3.selectbox("품목 코드", all_items)
-            
             min_date = pd.to_datetime(df_search['날짜']).min().date() if not df_search.empty else datetime.date.today()
             date_range = c4.date_input("조회 기간", [min_date, datetime.date.today()])
-
-        # 필터링 (문자열끼리 비교하므로 정확함)
-        if search_lot:
-            df_search = df_search[df_search['LOT번호'].str.contains(search_lot, case=False, na=False)]
-        
-        if sel_client != "전체":
-            df_search = df_search[df_search['거래처'] == sel_client]
-            
-        if sel_item != "전체":
-            df_search = df_search[df_search['코드'] == sel_item]
-            
+        if search_lot: df_search = df_search[df_search['LOT번호'].str.contains(search_lot, case=False, na=False)]
+        if sel_client != "전체": df_search = df_search[df_search['거래처'] == sel_client]
+        if sel_item != "전체": df_search = df_search[df_search['코드'] == sel_item]
         if len(date_range) == 2:
             s_date, e_date = date_range
             df_search['날짜'] = pd.to_datetime(df_search['날짜'])
             df_search = df_search[(df_search['날짜'].dt.date >= s_date) & (df_search['날짜'].dt.date <= e_date)]
             df_search['날짜'] = df_search['날짜'].dt.strftime('%Y-%m-%d')
-
         st.markdown(f"### 📋 조회 결과: 총 {len(df_search)}건")
         cols = ['날짜', '거래처', '코드', '품목명', '수량', 'LOT번호', '상태', '비고']
         valid_cols = [c for c in cols if c in df_search.columns]
