@@ -331,69 +331,43 @@ elif menu == "재고/생산 관리":
                 chart = alt.Chart(daily).mark_line(point=True).encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=350).interactive()
                 st.altair_chart(chart, use_container_width=True)
     
-    # 🔥 [신규 기능] 잘못된 기록 삭제 탭
     with t6:
         st.header("🗑️ 잘못된 기록 삭제 및 복구")
         st.warning("주의: 기록을 삭제하면 해당 수량만큼 재고가 자동으로 원상복구(반대 처리) 됩니다.")
-        
         if not df_logs.empty:
-            # 최근 50개 로그만 역순으로 표시
             df_recent = df_logs.tail(50).iloc[::-1].copy()
-            # GSheet 실제 행 번호 (헤더가 1행이므로, 인덱스 + 2)
             df_recent['Sheet_Row'] = df_recent.index + 2
             
-            # 선택 UI
-            st.write("▼ 삭제할 기록을 선택하세요 (최근 50건 표시)")
-            
-            # 보기 편하게 컬럼 정리
+            # 🔥 [수정] 중복 구분용 No. 추가
             disp_df = df_recent.copy()
-            disp_df['표시명'] = disp_df.apply(lambda x: f"[{x['날짜']} {x['시간']}] {x['구분']} - {x['품목명']} ({x['수량']}kg) / {x['비고']}", axis=1)
+            disp_df['표시명'] = disp_df.apply(lambda x: f"No.{x['Sheet_Row']} | [{x['날짜']} {x['시간']}] {x['구분']} - {x['품목명']} ({x['수량']}kg) / {x['비고']}", axis=1)
             
             del_target = st.selectbox("삭제 대상 선택", disp_df['Sheet_Row'].tolist(), format_func=lambda x: disp_df[disp_df['Sheet_Row']==x]['표시명'].values[0])
             
             if st.button("❌ 선택한 기록 삭제 (재고 자동 복구)", type="primary"):
                 target_row = df_recent[df_recent['Sheet_Row'] == del_target].iloc[0]
-                
-                # 재고 원상복구 로직
                 rev_qty = 0
                 cat_del = target_row['구분']
                 qty_del = safe_float(target_row['수량'])
                 code_del = target_row['코드']
                 
-                # 입고/생산 이었다면 -> 재고 차감 (-Qty)
-                # 출고/사용 이었다면 -> 재고 원복 (+Qty)
-                # 재고실사 였다면 -> 복구 불가 (수동 수정 안내)
-                
                 if cat_del == "재고실사":
                     st.error("재고실사 기록은 삭제해도 재고가 복구되지 않습니다. 다시 실사를 진행해주세요.")
-                    # 그래도 로그는 삭제할지 물어보는게 좋지만, 안전을 위해 중단하거나 로그만 삭제
                     sheet_logs.delete_rows(int(del_target))
                     st.success("로그 기록만 삭제되었습니다.")
                     time.sleep(2); st.cache_data.clear(); st.rerun()
                 else:
-                    # 반대 수량 계산
-                    if qty_del > 0: rev_qty = -qty_del # 원래 +였으니 -로 상쇄
-                    else: rev_qty = abs(qty_del)       # 원래 -였으니 +로 상쇄
-                    
-                    # 1. 재고 업데이트 (복구)
+                    if qty_del > 0: rev_qty = -qty_del
+                    else: rev_qty = abs(qty_del)
                     update_inventory(target_row['공장'], code_del, rev_qty)
-                    
-                    # 2. 로그 행 삭제
                     try:
                         sheet_logs.delete_rows(int(del_target))
                         st.success(f"삭제 완료! 재고가 {rev_qty} 만큼 보정되었습니다.")
-                        
-                        # 생산 기록 삭제 시 BOM 관련 안내
                         if cat_del == "생산":
                             st.info("💡 참고: 생산 제품의 재고는 복구되었으나, 자동으로 차감된 원자재(BOM) 기록은 안전을 위해 자동 복구되지 않았습니다. 필요시 원자재 재고실사를 진행해주세요.")
-                            
-                        time.sleep(3)
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"삭제 실패: {e}")
-        else:
-            st.info("기록이 없습니다.")
+                        time.sleep(3); st.cache_data.clear(); st.rerun()
+                    except Exception as e: st.error(f"삭제 실패: {e}")
+        else: st.info("기록이 없습니다.")
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
