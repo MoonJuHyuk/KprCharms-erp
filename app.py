@@ -529,7 +529,7 @@ elif menu == "영업/출고 관리":
                             st.caption("▼ 미리보기")
                             st.components.v1.html(preview_diamond, height=300, scrolling=True)
 
-                        # [2] 신규 표준 텍스트 라벨 (수정됨: 가로방향, 테두리 없음, 글자크기 통일)
+                        # [2] 신규 표준 텍스트 라벨 (수정됨: 간격 좁힘, 중앙정렬)
                         with st.expander("📄 표준 텍스트 라벨 (신규)", expanded=True):
                             labels_html_text = ""
                             for plt_num, group in dp.groupby('팔레트번호'):
@@ -555,7 +555,7 @@ elif menu == "영업/출고 관리":
                                         {cli}
                                     </div>
 
-                                    <div style="width: 90%; display: flex; justify-content: space-between; font-size: 50px; margin-bottom: 40px;">
+                                    <div style="width: 100%; display: flex; justify-content: center; gap: 100px; font-size: 50px; margin-bottom: 40px;">
                                         <span>{p_code}</span>
                                         <span>{p_qty:,.0f}KG</span>
                                     </div>
@@ -569,7 +569,6 @@ elif menu == "영업/출고 관리":
                                 """
                                 labels_html_text += label_div
                             
-                            # ⚠️ 여기서 "landscape"로 변경됨 (가로 인쇄)
                             btn_lbl_t = create_print_button(labels_html_text, "Standard Labels", "landscape")
                             st.components.v1.html(btn_lbl_t, height=50)
                             
