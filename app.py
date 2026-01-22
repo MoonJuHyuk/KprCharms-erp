@@ -246,8 +246,22 @@ elif menu == "재고/생산 관리":
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
+                    
                     if cat=="생산" and not df_bom.empty:
-                        for i,r in df_bom[df_bom['제품코드'].astype(str)==str(sel_code)].iterrows():
+                        # 🔥 [수정됨] BOM 검색 로직 강화: 제품코드 AND 타입 일치
+                        selected_type = item_info['타입']
+                        
+                        # BOM 시트에 '타입' 컬럼이 있다고 가정하고 필터링
+                        if '타입' in df_bom.columns:
+                            bom_targets = df_bom[
+                                (df_bom['제품코드'].astype(str) == str(sel_code)) & 
+                                (df_bom['타입'].astype(str) == str(selected_type))
+                            ].drop_duplicates(subset=['자재코드'])
+                        else:
+                            # 만약 BOM 시트에 '타입' 컬럼을 아직 안 만드셨다면 기존 방식대로 (임시 방편)
+                            bom_targets = df_bom[df_bom['제품코드'].astype(str) == str(sel_code)].drop_duplicates(subset=['자재코드'])
+
+                        for i,r in bom_targets.iterrows():
                             req = qty_in * safe_float(r['소요량'])
                             update_inventory(factory, r['자재코드'], -req)
                             time.sleep(0.5) 
@@ -338,7 +352,6 @@ elif menu == "재고/생산 관리":
             df_recent = df_logs.tail(50).iloc[::-1].copy()
             df_recent['Sheet_Row'] = df_recent.index + 2
             
-            # 🔥 [수정] 중복 구분용 No. 추가
             disp_df = df_recent.copy()
             disp_df['표시명'] = disp_df.apply(lambda x: f"No.{x['Sheet_Row']} | [{x['날짜']} {x['시간']}] {x['구분']} - {x['품목명']} ({x['수량']}kg) / {x['비고']}", axis=1)
             
