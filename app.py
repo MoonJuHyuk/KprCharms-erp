@@ -12,10 +12,7 @@ import base64
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    
-    # 파트너님의 구글 시트 ID
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
-    
     try:
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
@@ -23,13 +20,11 @@ def get_connection():
             client = gspread.authorize(creds)
             return client.open_by_key(spreadsheet_id)
     except Exception: pass
-
     key_file = 'key.json'
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(spreadsheet_id)
-    
     return None
 
 doc = get_connection()
@@ -45,7 +40,7 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 (캐싱 적용) ---
+# --- 2. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
@@ -97,24 +92,14 @@ def get_shape(code, df_items):
             else: shape = korean_type
     return shape
 
-# 🔥 팝업 인쇄 버튼 생성 함수
 def create_print_button(html_content, title="Print", orientation="portrait"):
     safe_content = html_content.replace('`', '\`').replace('$', '\$')
     page_css = "@page { size: A4 portrait; margin: 1cm; }"
-    if orientation == "landscape":
-        page_css = "@page { size: A4 landscape; margin: 1cm; }"
-
-    js_code = f"""
-    <script>
+    if orientation == "landscape": page_css = "@page { size: A4 landscape; margin: 1cm; }"
+    js_code = f"""<script>
     function print_{title.replace(" ", "_")}() {{
         var win = window.open('', '', 'width=900,height=700');
-        win.document.write('<html><head><title>{title}</title>');
-        win.document.write('<style>');
-        win.document.write('{page_css}');
-        win.document.write('body {{ font-family: sans-serif; -webkit-print-color-adjust: exact; margin: 0; padding: 0; }}');
-        win.document.write('table {{ border-collapse: collapse; width: 100%; }} th, td {{ border: 1px solid black; padding: 4px; }}');
-        win.document.write('.page-break {{ page-break-after: always; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }}');
-        win.document.write('</style></head><body>');
+        win.document.write('<html><head><title>{title}</title><style>{page_css} body {{ font-family: sans-serif; margin: 0; padding: 0; }} table {{ border-collapse: collapse; width: 100%; }} th, td {{ border: 1px solid black; padding: 4px; }} .page-break {{ page-break-after: always; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }}</style></head><body>');
         win.document.write(`{safe_content}`);
         win.document.write('</body></html>');
         win.document.close();
@@ -122,70 +107,42 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
         setTimeout(function() {{ win.print(); }}, 500);
     }}
     </script>
-    <button onclick="print_{title.replace(" ", "_")}()" style="
-        background-color: #4CAF50; border: none; color: white; padding: 10px 20px;
-        text-align: center; text-decoration: none; display: inline-block;
-        font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 5px;">
-        🖨️ {title} 인쇄하기
-    </button>
-    """
+    <button onclick="print_{title.replace(" ", "_")}()" style="background-color: #4CAF50; border: none; color: white; padding: 10px 20px; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 5px;">🖨️ {title} 인쇄하기</button>"""
     return js_code
 
-# [앱 아이콘 강제 적용 함수]
 def add_apple_touch_icon(image_path):
     try:
         with open(image_path, "rb") as f:
-            img_data = f.read()
-            b64_icon = base64.b64encode(img_data).decode("utf-8")
-            st.markdown(
-                f"""<head>
-                <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}">
-                <link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}">
-                </head>""", unsafe_allow_html=True
-            )
-    except Exception: pass
+            b64_icon = base64.b64encode(f.read()).decode("utf-8")
+            st.markdown(f"""<head><link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}"><link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}"></head>""", unsafe_allow_html=True)
+    except: pass
 
-# --- 5. 메인 앱 ---
-# Page Config
+# --- 5. 앱 설정 & 로그인 ---
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
     add_apple_touch_icon("logo.png")
 else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
-# 🔒 [보안] 로그인 시스템
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
-
 if not st.session_state["authenticated"]:
     st.title("🔒 KPR ERP 시스템")
-    st.write("관계자 외 접속을 제한합니다.")
-    
     c1, c2 = st.columns([1, 2])
     with c1:
-        pw = st.text_input("접속 암호를 입력하세요", type="password")
-        if st.button("로그인"):
-            if pw == "kpr1234":  # 비밀번호
-                st.session_state["authenticated"] = True
-                st.success("로그인 성공!")
-                time.sleep(0.5)
-                st.rerun()
-            else:
-                st.error("암호가 틀렸습니다.")
+        if st.button("로그인", type="primary"):
+            if st.text_input("접속 암호", type="password") == "kpr1234":
+                st.session_state["authenticated"] = True; st.rerun()
+            else: st.error("암호가 틀렸습니다.")
     st.stop()
-# -----------------------------------------------------------
 
 df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
-
 if 'cart' not in st.session_state: st.session_state['cart'] = []
-if 'bom_unlocked' not in st.session_state: st.session_state['bom_unlocked'] = False
 
+# --- 사이드바 ---
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     else: st.header("🏭 KPR / Chamstek")
-    
-    if st.button("🔄 새로고침"):
-        st.cache_data.clear()
-        st.rerun()
+    if st.button("🔄 새로고침"): st.cache_data.clear(); st.rerun()
     st.markdown("---")
     menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색"])
     st.markdown("---")
@@ -204,12 +161,8 @@ if menu == "대시보드":
         out = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
         k1.metric("오늘 생산", f"{prod:,.0f} kg")
         k2.metric("오늘 출고", f"{out:,.0f} kg")
-        
-        pend = 0
-        if not df_orders.empty and '상태' in df_orders.columns:
-            pend = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique())
+        pend = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
         k3.metric("출고 대기 주문", f"{pend} 건", delta="작업 필요", delta_color="inverse")
-        
         st.markdown("---")
         if '구분' in df_logs.columns:
             df_prod = df_logs[df_logs['구분'] == '생산'].copy()
@@ -218,11 +171,6 @@ if menu == "대시보드":
                 daily_prod = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜').tail(7)
                 chart = alt.Chart(daily_prod).mark_bar().encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
-        st.markdown("---")
-        st.subheader("📉 최근 재고 실사/조정 이력")
-        df_audit = df_logs[df_logs['구분'].isin(['재고실사', '재고조정'])].copy()
-        if not df_audit.empty: st.dataframe(df_audit.tail(5).sort_index(ascending=False), use_container_width=True)
-        else: st.info("재고 실사 기록이 없습니다.")
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
@@ -232,43 +180,33 @@ elif menu == "재고/생산 관리":
         
         sel_code=None; item_info=None; sys_q=0.0
         
-        # [NEW] 생산일 경우 라인 선택 (공장별 맞춤 설정)
+        # 설비 라인 선택
         prod_line = "-"
         if cat == "생산":
             line_options = []
             if factory == "1공장":
-                # 1공장: 압출1호 ~ 5호
                 line_options = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
             elif factory == "2공장":
-                # 2공장: 압출1호~6호 + 컷팅1호~10호
-                ext_lines = [f"압출{i}호" for i in range(1, 7)]
-                cut_lines = [f"컷팅{i}호" for i in range(1, 11)]
-                line_options = ext_lines + cut_lines + ["기타"]
-            
+                line_options = [f"압출{i}호" for i in range(1, 7)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
             prod_line = st.selectbox("설비 라인", line_options)
 
         if not df_items.empty:
             df_f = df_items.copy()
             
-            # 🔥 [수정됨 1] 필터 범위 확대: '반제품'도 보이게 수정
+            # 🔥 [수정 1] 반제품 검색 허용
             if cat=="입고": 
                 df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": 
-                # '제품', '완제품' 외에 '반제품'도 포함
                 df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
             
-            # 🔥 [수정됨 2] 그룹 분류 로직 개선 (반제품 그룹 추가)
+            # 🔥 [수정 2] 그룹 분류 로직 (반제품 추가)
             def get_group(row):
-                # 1순위: 구분이 '반제품'이거나 이름 끝에 '반'이 들어가면 -> "반제품" 그룹
-                if row['구분'] == '반제품' or str(row['품목명']).strip().endswith('반'):
-                    return "반제품"
-                
-                # 2순위: 이름에 따른 분류
                 name = str(row['품목명']).upper()
+                grp = str(row['구분'])
+                if grp == '반제품' or name.strip().endswith('반'): return "반제품"
                 if "CP" in name or "COMPOUND" in name: return "COMPOUND"
                 if "KG" in name: return "KG"
                 if "KA" in name: return "KA"
-                
                 return "기타"
 
             df_f['Group'] = df_f.apply(get_group, axis=1)
@@ -279,24 +217,23 @@ elif menu == "재고/생산 관리":
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
                 
-                # 그룹별 선택 로직
-                if grp=="COMPOUND":
-                    clr = st.selectbox("2.색상", sorted(df_step1['색상'].unique()))
-                    final = df_step1[df_step1['색상']==clr]
-                elif grp=="반제품":
-                    # 반제품은 품목명으로 바로 선택하게 함
-                    p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].unique()))
+                # 그룹별 선택 로직 (문자열 변환으로 에러 방지)
+                if grp == "반제품":
+                    p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].astype(str).unique()))
                     final = df_step1[df_step1['품목명']==p_name]
-                elif cat=="입고":
-                    spc = st.selectbox("2.규격", sorted(df_step1['규격'].unique())) if len(df_step1['규격'].unique())>1 else None
+                elif grp == "COMPOUND":
+                    clr = st.selectbox("2.색상", sorted(df_step1['색상'].astype(str).unique()))
+                    final = df_step1[df_step1['색상']==clr]
+                elif cat == "입고":
+                    spc = st.selectbox("2.규격", sorted(df_step1['규격'].astype(str).unique())) if len(df_step1['규격'].unique())>1 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    # KA, KG 등 일반 제품
-                    typ = st.selectbox("2.타입", sorted(df_step1['타입'].unique()))
+                    # 일반 제품 (KA, KG)
+                    typ = st.selectbox("2.타입", sorted(df_step1['타입'].astype(str).unique()))
                     df_step2 = df_step1[df_step1['타입']==typ]
-                    clr = st.selectbox("3.색상", sorted(df_step2['색상'].unique()))
+                    clr = st.selectbox("3.색상", sorted(df_step2['색상'].astype(str).unique()))
                     df_step3 = df_step2[df_step2['색상']==clr]
-                    spc = st.selectbox("4.규격", sorted(df_step3['규격'].unique()))
+                    spc = st.selectbox("4.규격", sorted(df_step3['규격'].astype(str).unique()))
                     final = df_step3[df_step3['규격']==spc]
                 
                 if not final.empty:
@@ -307,19 +244,16 @@ elif menu == "재고/생산 관리":
                         if not r.empty: sys_q = safe_float(r.iloc[0]['현재고'])
                         st.info(f"전산: {sys_q}")
         
-        qty_in = 0.0; note_in = ""
-        if cat=="재고실사":
+        qty_in = st.number_input("수량") if cat != "재고실사" else 0.0
+        note_in = st.text_input("비고")
+        if cat == "재고실사":
             real = st.number_input("실사값", value=float(sys_q))
             qty_in = real - sys_q
-            note_in = f"[실사] {st.text_input('비고')}"
-        else:
-            qty_in = st.number_input("수량")
-            note_in = st.text_input("비고")
+            note_in = f"[실사] {note_in}"
             
         if st.button("저장"):
             if sheet_logs:
                 try:
-                    # [저장 구조] -> [..., 비고, 거래처(L), 라인(M)]
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
@@ -328,7 +262,6 @@ elif menu == "재고/생산 관리":
                             req = qty_in * safe_float(r['소요량'])
                             update_inventory(factory, r['자재코드'], -req)
                             time.sleep(0.5) 
-                            # BOM 차감 시에도 라인 정보 기록
                             sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{sel_code} 생산", "-", prod_line])
                     st.cache_data.clear(); st.success("완료"); st.rerun()
                 except Exception as e: st.error(f"오류: {e}")
@@ -352,27 +285,16 @@ elif menu == "재고/생산 관리":
                 else: df_v = df_v[df_v['구분']==cat_f]
             st.dataframe(df_v, use_container_width=True)
     
-    # [NEW] 생산 기록 검색 및 인쇄 기능
     with t2:
         st.subheader("🔍 생산 이력 검색 및 인쇄")
-        if df_logs.empty:
-            st.info("로그 데이터가 없습니다.")
+        if df_logs.empty: st.info("로그 데이터가 없습니다.")
         else:
-            # 생산 데이터만 필터링
             df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
-            
-            # 컬럼 매핑 (M열이 라인)
             if len(df_prod_log.columns) >= 13:
-                cols = list(df_prod_log.columns)
-                cols[12] = '라인' # M열(인덱스 12)
-                df_prod_log.columns = cols
-            else:
-                df_prod_log['라인'] = "-"
-
-            # 문자열 변환
+                cols = list(df_prod_log.columns); cols[12] = '라인'; df_prod_log.columns = cols
+            else: df_prod_log['라인'] = "-"
             for col in ['코드', '품목명', '라인']:
-                if col in df_prod_log.columns:
-                    df_prod_log[col] = df_prod_log[col].astype(str)
+                if col in df_prod_log.columns: df_prod_log[col] = df_prod_log[col].astype(str)
 
             with st.expander("🔎 검색 옵션 (클릭해서 열기)", expanded=True):
                 c_s1, c_s2, c_s3, c_s4 = st.columns(4)
@@ -419,12 +341,6 @@ elif menu == "재고/생산 관리":
                 daily = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜')
                 chart = alt.Chart(daily).mark_line(point=True).encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=350).interactive()
                 st.altair_chart(chart, use_container_width=True)
-            else: st.info("생산 데이터가 없습니다.")
-            st.markdown("---")
-            st.subheader("📉 재고 실사 및 조정 내역")
-            df_audit = df_logs[df_logs['구분'].isin(['재고실사', '재고조정'])].copy()
-            if not df_audit.empty: st.dataframe(df_audit.tail(5).sort_index(ascending=False), use_container_width=True)
-            else: st.info("재고 실사 기록이 없습니다.")
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
@@ -483,7 +399,6 @@ elif menu == "영업/출고 관리":
                 def format_ord(ord_id):
                     info = order_dict.get(ord_id)
                     return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
-
                 tgt = st.selectbox("수정/삭제할 주문 선택", pend['주문번호'].unique(), format_func=format_ord)
                 original_df = pend[pend['주문번호']==tgt].copy()
                 if not df_items.empty:
@@ -491,7 +406,6 @@ elif menu == "영업/출고 관리":
                     original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
                 else: original_df['타입'] = "-"
                 if 'LOT번호' not in original_df.columns: original_df['LOT번호'] = ""
-
                 editor_cols = ['팔레트번호', '코드', '품목명', '타입', '수량', 'LOT번호', '비고']
                 edited_df = st.data_editor(
                     original_df[editor_cols], num_rows="dynamic", key="pallet_editor", use_container_width=True, disabled=["타입"]
@@ -544,7 +458,6 @@ elif menu == "영업/출고 관리":
                 def format_ord_prt(ord_id):
                     info = order_dict_prt.get(ord_id)
                     return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
-
                 tgt_p = st.selectbox("출력할 주문", pend['주문번호'].unique(), key='prt_sel', format_func=format_ord_prt)
                 dp = pend[pend['주문번호']==tgt_p].copy()
                 if not dp.empty:
