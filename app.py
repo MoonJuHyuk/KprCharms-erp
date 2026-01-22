@@ -241,24 +241,21 @@ elif menu == "재고/생산 관리":
             note_in = f"[실사] {note_in}"
             
         if st.button("저장"):
-            if sheet_logs:
+            # 🔥 [수정] 아이템 선택 여부 확인 (에러 방지)
+            if item_info is None:
+                st.error("🚨 품목이 선택되지 않았습니다. 위에서 품목을 먼저 선택해주세요.")
+            elif sheet_logs:
                 try:
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
                     
                     if cat=="생산" and not df_bom.empty:
-                        # 🔥 [수정됨] BOM 검색 로직 강화: 제품코드 AND 타입 일치
+                        # BOM 중복 방지 (타입까지 확인)
                         selected_type = item_info['타입']
-                        
-                        # BOM 시트에 '타입' 컬럼이 있다고 가정하고 필터링
                         if '타입' in df_bom.columns:
-                            bom_targets = df_bom[
-                                (df_bom['제품코드'].astype(str) == str(sel_code)) & 
-                                (df_bom['타입'].astype(str) == str(selected_type))
-                            ].drop_duplicates(subset=['자재코드'])
+                            bom_targets = df_bom[(df_bom['제품코드'].astype(str) == str(sel_code)) & (df_bom['타입'].astype(str) == str(selected_type))].drop_duplicates(subset=['자재코드'])
                         else:
-                            # 만약 BOM 시트에 '타입' 컬럼을 아직 안 만드셨다면 기존 방식대로 (임시 방편)
                             bom_targets = df_bom[df_bom['제품코드'].astype(str) == str(sel_code)].drop_duplicates(subset=['자재코드'])
 
                         for i,r in bom_targets.iterrows():
