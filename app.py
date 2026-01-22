@@ -12,19 +12,26 @@ import base64
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    
+    # 파트너님의 구글 시트 ID
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
+    
     try:
+        # 1. Streamlit Cloud 배포 환경 (Secrets 사용)
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
             client = gspread.authorize(creds)
             return client.open_by_key(spreadsheet_id)
     except Exception: pass
+
+    # 2. 로컬 개발 환경 (key.json 사용)
     key_file = 'key.json'
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
         client = gspread.authorize(creds)
         return client.open_by_key(spreadsheet_id)
+    
     return None
 
 doc = get_connection()
@@ -95,6 +102,7 @@ def get_shape(code, df_items):
 # 🔥 팝업 인쇄 버튼 생성 함수
 def create_print_button(html_content, title="Print", orientation="portrait"):
     safe_content = html_content.replace('`', '\`').replace('$', '\$')
+    
     page_css = "@page { size: A4 portrait; margin: 1cm; }"
     if orientation == "landscape":
         page_css = "@page { size: A4 landscape; margin: 1cm; }"
@@ -126,47 +134,64 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
     """
     return js_code
 
+# [앱 아이콘 강제 적용 함수]
 def add_apple_touch_icon(image_path):
     try:
         with open(image_path, "rb") as f:
             img_data = f.read()
             b64_icon = base64.b64encode(img_data).decode("utf-8")
             st.markdown(
-                f"""<head>
+                f"""
+                <head>
                 <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}">
                 <link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}">
-                </head>""", unsafe_allow_html=True
+                </head>
+                """,
+                unsafe_allow_html=True
             )
     except Exception: pass
 
-# --- 5. 메인 앱 설정 ---
+# --- 5. 메인 앱 ---
+# Page Config
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
     add_apple_touch_icon("logo.png")
 else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
-# 🔒 로그인
+# 🔒 [보안] 로그인 시스템
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
+
 if not st.session_state["authenticated"]:
     st.title("🔒 KPR ERP 시스템")
+    st.write("관계자 외 접속을 제한합니다.")
+    
     c1, c2 = st.columns([1, 2])
     with c1:
-        pw = st.text_input("접속 암호", type="password")
+        pw = st.text_input("접속 암호를 입력하세요", type="password")
         if st.button("로그인"):
-            if pw == "kpr1234":
-                st.session_state["authenticated"] = True; st.rerun()
-            else: st.error("암호가 틀렸습니다.")
+            if pw == "kpr1234":  # 비밀번호
+                st.session_state["authenticated"] = True
+                st.success("로그인 성공!")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error("암호가 틀렸습니다.")
     st.stop()
+# -----------------------------------------------------------
 
 df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
-if 'cart' not in st.session_state: st.session_state['cart'] = []
 
-# --- 사이드바 ---
+if 'cart' not in st.session_state: st.session_state['cart'] = []
+if 'bom_unlocked' not in st.session_state: st.session_state['bom_unlocked'] = False
+
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     else: st.header("🏭 KPR / Chamstek")
-    if st.button("🔄 새로고침"): st.cache_data.clear(); st.rerun()
+    
+    if st.button("🔄 새로고침"):
+        st.cache_data.clear()
+        st.rerun()
     st.markdown("---")
     menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색"])
     st.markdown("---")
@@ -185,8 +210,12 @@ if menu == "대시보드":
         out = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
         k1.metric("오늘 생산", f"{prod:,.0f} kg")
         k2.metric("오늘 출고", f"{out:,.0f} kg")
-        pend = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
+        
+        pend = 0
+        if not df_orders.empty and '상태' in df_orders.columns:
+            pend = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique())
         k3.metric("출고 대기 주문", f"{pend} 건", delta="작업 필요", delta_color="inverse")
+        
         st.markdown("---")
         if '구분' in df_logs.columns:
             df_prod = df_logs[df_logs['구분'] == '생산'].copy()
@@ -195,6 +224,11 @@ if menu == "대시보드":
                 daily_prod = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜').tail(7)
                 chart = alt.Chart(daily_prod).mark_bar().encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
+        st.markdown("---")
+        st.subheader("📉 최근 재고 실사/조정 이력")
+        df_audit = df_logs[df_logs['구분'].isin(['재고실사', '재고조정'])].copy()
+        if not df_audit.empty: st.dataframe(df_audit.tail(5).sort_index(ascending=False), use_container_width=True)
+        else: st.info("재고 실사 기록이 없습니다.")
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
@@ -204,14 +238,25 @@ elif menu == "재고/생산 관리":
         
         sel_code=None; item_info=None; sys_q=0.0
         
-        # [NEW] 생산일 경우 라인 선택 기능
+        # [NEW] 생산일 경우 라인 선택 (공장별 맞춤 설정 - 수정됨)
         prod_line = "-"
         if cat == "생산":
-            prod_line = st.selectbox("설비 라인", ["압출1호", "압출2호", "압출3호", "압출4호", "기타"])
+            line_options = []
+            if factory == "1공장":
+                # 1공장: 압출1호 ~ 5호 (range(1, 6) -> 1,2,3,4,5)
+                line_options = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
+            elif factory == "2공장":
+                # 2공장: 압출1호~6호 + 컷팅1호~10호
+                ext_lines = [f"압출{i}호" for i in range(1, 7)] # 1~6
+                cut_lines = [f"컷팅{i}호" for i in range(1, 11)] # 1~10
+                line_options = ext_lines + cut_lines + ["기타"]
+            
+            prod_line = st.selectbox("설비 라인", line_options)
 
         if not df_items.empty:
             df_f = df_items.copy()
             df_f['Group'] = df_f['품목명'].apply(lambda x: "KG" if "KG" in str(x).upper() else ("KA" if "KA" in str(x).upper() else ("COMPOUND" if "CP" in str(x).upper() else str(x))))
+            
             if cat=="입고": df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": df_f = df_f[df_f['구분'].isin(['제품','완제품'])]
             
@@ -253,8 +298,7 @@ elif menu == "재고/생산 관리":
         if st.button("저장"):
             if sheet_logs:
                 try:
-                    # [NEW] 저장 구조 변경: [..., 비고, 거래처(L), 라인(M)]
-                    # 생산이므로 거래처는 "-", 라인은 prod_line 저장
+                    # [저장 구조] -> [..., 비고, 거래처(L), 라인(M)]
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
@@ -263,7 +307,6 @@ elif menu == "재고/생산 관리":
                             req = qty_in * safe_float(r['소요량'])
                             update_inventory(factory, r['자재코드'], -req)
                             time.sleep(0.5) 
-                            # BOM 차감 시에도 라인 정보 기록
                             sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{sel_code} 생산", "-", prod_line])
                     st.cache_data.clear(); st.success("완료"); st.rerun()
                 except Exception as e: st.error(f"오류: {e}")
@@ -588,7 +631,6 @@ elif menu == "영업/출고 관리":
                                 p_nm="-"; p_sp="-"; p_ty="-"; p_co="-"
                                 if not itm_info.empty:
                                     p_nm = itm_info.iloc[0]['품목명']; p_sp = itm_info.iloc[0]['규격']; p_ty = itm_info.iloc[0]['타입']; p_co = itm_info.iloc[0]['색상']
-                                # [NEW] 출고 확정 시: 거래처(L열)에는 거래처명, 라인(M열)에는 "-"
                                 sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], p_nm, p_sp, p_ty, p_co, -safe_float(row['수량']), f"주문출고({tgt_out})", cli, "-"])
                                 time.sleep(0.5)
                             time.sleep(1)
