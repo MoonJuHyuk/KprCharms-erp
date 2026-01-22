@@ -100,7 +100,6 @@ def get_shape(code, df_items):
 # 🔥 팝업 인쇄 버튼 생성 함수
 def create_print_button(html_content, title="Print", orientation="portrait"):
     safe_content = html_content.replace('`', '\`').replace('$', '\$')
-    
     page_css = "@page { size: A4 portrait; margin: 1cm; }"
     if orientation == "landscape":
         page_css = "@page { size: A4 landscape; margin: 1cm; }"
@@ -139,13 +138,10 @@ def add_apple_touch_icon(image_path):
             img_data = f.read()
             b64_icon = base64.b64encode(img_data).decode("utf-8")
             st.markdown(
-                f"""
-                <head>
+                f"""<head>
                 <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}">
                 <link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}">
-                </head>
-                """,
-                unsafe_allow_html=True
+                </head>""", unsafe_allow_html=True
             )
     except Exception: pass
 
@@ -253,25 +249,49 @@ elif menu == "재고/생산 관리":
 
         if not df_items.empty:
             df_f = df_items.copy()
-            df_f['Group'] = df_f['품목명'].apply(lambda x: "KG" if "KG" in str(x).upper() else ("KA" if "KA" in str(x).upper() else ("COMPOUND" if "CP" in str(x).upper() else str(x))))
             
+            # 🔥 [수정됨 1] 필터 범위 확대: '반제품'도 보이게 수정
             if cat=="입고": 
                 df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": 
-                # 🔥 [수정됨] 제품, 완제품 뿐만 아니라 '반제품'도 포함!
+                # '제품', '완제품' 외에 '반제품'도 포함
                 df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
             
+            # 🔥 [수정됨 2] 그룹 분류 로직 개선 (반제품 그룹 추가)
+            def get_group(row):
+                # 1순위: 구분이 '반제품'이거나 이름 끝에 '반'이 들어가면 -> "반제품" 그룹
+                if row['구분'] == '반제품' or str(row['품목명']).strip().endswith('반'):
+                    return "반제품"
+                
+                # 2순위: 이름에 따른 분류
+                name = str(row['품목명']).upper()
+                if "CP" in name or "COMPOUND" in name: return "COMPOUND"
+                if "KG" in name: return "KG"
+                if "KA" in name: return "KA"
+                
+                return "기타"
+
+            df_f['Group'] = df_f.apply(get_group, axis=1)
+            
             if not df_f.empty:
+                # 1. 그룹 선택
                 grp = st.selectbox("1.그룹", sorted(df_f['Group'].unique()))
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
+                
+                # 그룹별 선택 로직
                 if grp=="COMPOUND":
                     clr = st.selectbox("2.색상", sorted(df_step1['색상'].unique()))
                     final = df_step1[df_step1['색상']==clr]
+                elif grp=="반제품":
+                    # 반제품은 품목명으로 바로 선택하게 함
+                    p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].unique()))
+                    final = df_step1[df_step1['품목명']==p_name]
                 elif cat=="입고":
                     spc = st.selectbox("2.규격", sorted(df_step1['규격'].unique())) if len(df_step1['규격'].unique())>1 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
+                    # KA, KG 등 일반 제품
                     typ = st.selectbox("2.타입", sorted(df_step1['타입'].unique()))
                     df_step2 = df_step1[df_step1['타입']==typ]
                     clr = st.selectbox("3.색상", sorted(df_step2['색상'].unique()))
