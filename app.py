@@ -61,28 +61,22 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# --- 3. 재고 업데이트 (통합 창고 로직 적용) ---
+# --- 3. 재고 업데이트 (통합 창고) ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
         time.sleep(1)
         cells = sheet_inventory.findall(str(code))
         target = None
-        
-        # [수정됨] 공장 구분 없이 코드가 일치하면 해당 재고를 사용 (통합 창고 개념)
-        # findall로 찾은 셀 중, 실제 코드 컬럼(2번째 열)에 있는 것인지 확인
         if cells:
             for c in cells:
                 if c.col == 2: # B열(코드)인지 확인
-                    target = c
-                    break
+                    target = c; break
         
         if target:
-            # 기존 재고가 있으면 (어느 공장이든 상관없이) 수량 업데이트
             curr = safe_float(sheet_inventory.cell(target.row, 7).value)
             sheet_inventory.update_cell(target.row, 7, curr + qty)
         else:
-            # 신규 재고 생성 (이때는 입력된 공장 정보를 라벨로 사용)
             sheet_inventory.append_row([factory, code, p_name, p_spec, p_type, p_color, qty])
     except: pass
 
@@ -184,31 +178,22 @@ if menu == "대시보드":
 elif menu == "재고/생산 관리":
     with st.sidebar:
         st.markdown("### 📝 작업 입력")
-        # 🔥 [수정] '이동' 삭제 (통합 창고이므로 불필요)
         cat = st.selectbox("구분", ["입고", "생산", "재고실사"])
         
         sel_code=None; item_info=None; sys_q=0.0
-        
-        # 설비 라인 선택 (공장별 맞춤)
         prod_line = "-"
+        
         if cat == "생산":
             line_options = []
-            if factory == "1공장":
-                line_options = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
-            elif factory == "2공장":
-                line_options = [f"압출{i}호" for i in range(1, 7)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
+            if factory == "1공장": line_options = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
+            elif factory == "2공장": line_options = [f"압출{i}호" for i in range(1, 7)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
             prod_line = st.selectbox("설비 라인", line_options)
 
         if not df_items.empty:
             df_f = df_items.copy()
+            if cat=="입고": df_f = df_f[df_f['구분']=='원자재']
+            elif cat=="생산": df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
             
-            # 필터: 반제품 포함
-            if cat=="입고": 
-                df_f = df_f[df_f['구분']=='원자재']
-            elif cat=="생산": 
-                df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
-            
-            # 그룹 분류 (반제품 추가)
             def get_group(row):
                 name = str(row['품목명']).upper()
                 grp = str(row['구분'])
@@ -217,16 +202,12 @@ elif menu == "재고/생산 관리":
                 if "KG" in name: return "KG"
                 if "KA" in name: return "KA"
                 return "기타"
-
             df_f['Group'] = df_f.apply(get_group, axis=1)
             
             if not df_f.empty:
-                # 1. 그룹 선택
                 grp = st.selectbox("1.그룹", sorted(df_f['Group'].unique()))
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
-                
-                # 그룹별 선택 로직
                 if grp == "반제품":
                     p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].astype(str).unique()))
                     final = df_step1[df_step1['품목명']==p_name]
@@ -247,9 +228,7 @@ elif menu == "재고/생산 관리":
                 if not final.empty:
                     item_info = final.iloc[0]; sel_code = item_info['코드']
                     st.success(f"선택: {sel_code}")
-                    # 통합 재고이므로 팩토리 구분 없이 전체 수량 합계 표시 (참고용)
                     if cat=="재고실사" and not df_inventory.empty:
-                        # 전체 통합 재고 조회
                         inv_rows = df_inventory[df_inventory['코드'].astype(str)==str(sel_code)]
                         sys_q = inv_rows['현재고'].apply(safe_float).sum()
                         st.info(f"전산 재고(통합): {sys_q}")
@@ -264,17 +243,12 @@ elif menu == "재고/생산 관리":
         if st.button("저장"):
             if sheet_logs:
                 try:
-                    # [저장 구조] -> [..., 비고, 거래처(L), 라인(M)]
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
-                    
-                    # 수량 반영 (통합 창고 로직)
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
-                    
                     if cat=="생산" and not df_bom.empty:
                         for i,r in df_bom[df_bom['제품코드'].astype(str)==str(sel_code)].iterrows():
                             req = qty_in * safe_float(r['소요량'])
-                            # BOM 차감 (통합 창고에서 자동 차감)
                             update_inventory(factory, r['자재코드'], -req)
                             time.sleep(0.5) 
                             sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{sel_code} 생산", "-", prod_line])
@@ -283,7 +257,7 @@ elif menu == "재고/생산 관리":
 
     st.title(f"📦 재고/생산 관리 ({factory})")
     
-    t1, t2, t3, t4, t5 = st.tabs(["📦 재고 현황", "🏭 생산 기록(검색/인쇄)", "📜 전체 로그", "🔩 BOM", "📊 분석/실사"])
+    t1, t2, t3, t4, t5, t6 = st.tabs(["📦 재고 현황", "🏭 생산 기록(검색/인쇄)", "📜 전체 로그", "🔩 BOM", "📊 분석/실사", "🗑️ 잘못된 기록 삭제"])
     
     with t1:
         if not df_inventory.empty:
@@ -291,13 +265,9 @@ elif menu == "재고/생산 관리":
             if not df_items.empty:
                 cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict()
                 df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
-            
-            # [수정] 통합 창고이므로 재고 현황에서도 공장 필터를 기본적으로 '전체'로 두거나, 구분 없이 보여주는 게 좋음
-            # 여기서는 편의상 필터 기능을 유지하되, 사용자가 '전체'를 보면 통합 재고를 볼 수 있음
             c1, c2 = st.columns(2)
             fac_f = c1.radio("공장 (위치 확인용)", ["전체", "1공장", "2공장"], horizontal=True)
             cat_f = c2.radio("품목", ["전체", "제품", "반제품", "원자재"], horizontal=True)
-            
             if fac_f != "전체": df_v = df_v[df_v['공장']==fac_f]
             if cat_f != "전체": 
                 if cat_f=="제품": df_v = df_v[df_v['구분'].isin(['제품','완제품'])]
@@ -360,6 +330,70 @@ elif menu == "재고/생산 관리":
                 daily = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜')
                 chart = alt.Chart(daily).mark_line(point=True).encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=350).interactive()
                 st.altair_chart(chart, use_container_width=True)
+    
+    # 🔥 [신규 기능] 잘못된 기록 삭제 탭
+    with t6:
+        st.header("🗑️ 잘못된 기록 삭제 및 복구")
+        st.warning("주의: 기록을 삭제하면 해당 수량만큼 재고가 자동으로 원상복구(반대 처리) 됩니다.")
+        
+        if not df_logs.empty:
+            # 최근 50개 로그만 역순으로 표시
+            df_recent = df_logs.tail(50).iloc[::-1].copy()
+            # GSheet 실제 행 번호 (헤더가 1행이므로, 인덱스 + 2)
+            df_recent['Sheet_Row'] = df_recent.index + 2
+            
+            # 선택 UI
+            st.write("▼ 삭제할 기록을 선택하세요 (최근 50건 표시)")
+            
+            # 보기 편하게 컬럼 정리
+            disp_df = df_recent.copy()
+            disp_df['표시명'] = disp_df.apply(lambda x: f"[{x['날짜']} {x['시간']}] {x['구분']} - {x['품목명']} ({x['수량']}kg) / {x['비고']}", axis=1)
+            
+            del_target = st.selectbox("삭제 대상 선택", disp_df['Sheet_Row'].tolist(), format_func=lambda x: disp_df[disp_df['Sheet_Row']==x]['표시명'].values[0])
+            
+            if st.button("❌ 선택한 기록 삭제 (재고 자동 복구)", type="primary"):
+                target_row = df_recent[df_recent['Sheet_Row'] == del_target].iloc[0]
+                
+                # 재고 원상복구 로직
+                rev_qty = 0
+                cat_del = target_row['구분']
+                qty_del = safe_float(target_row['수량'])
+                code_del = target_row['코드']
+                
+                # 입고/생산 이었다면 -> 재고 차감 (-Qty)
+                # 출고/사용 이었다면 -> 재고 원복 (+Qty)
+                # 재고실사 였다면 -> 복구 불가 (수동 수정 안내)
+                
+                if cat_del == "재고실사":
+                    st.error("재고실사 기록은 삭제해도 재고가 복구되지 않습니다. 다시 실사를 진행해주세요.")
+                    # 그래도 로그는 삭제할지 물어보는게 좋지만, 안전을 위해 중단하거나 로그만 삭제
+                    sheet_logs.delete_rows(int(del_target))
+                    st.success("로그 기록만 삭제되었습니다.")
+                    time.sleep(2); st.cache_data.clear(); st.rerun()
+                else:
+                    # 반대 수량 계산
+                    if qty_del > 0: rev_qty = -qty_del # 원래 +였으니 -로 상쇄
+                    else: rev_qty = abs(qty_del)       # 원래 -였으니 +로 상쇄
+                    
+                    # 1. 재고 업데이트 (복구)
+                    update_inventory(target_row['공장'], code_del, rev_qty)
+                    
+                    # 2. 로그 행 삭제
+                    try:
+                        sheet_logs.delete_rows(int(del_target))
+                        st.success(f"삭제 완료! 재고가 {rev_qty} 만큼 보정되었습니다.")
+                        
+                        # 생산 기록 삭제 시 BOM 관련 안내
+                        if cat_del == "생산":
+                            st.info("💡 참고: 생산 제품의 재고는 복구되었으나, 자동으로 차감된 원자재(BOM) 기록은 안전을 위해 자동 복구되지 않았습니다. 필요시 원자재 재고실사를 진행해주세요.")
+                            
+                        time.sleep(3)
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"삭제 실패: {e}")
+        else:
+            st.info("기록이 없습니다.")
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
