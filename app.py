@@ -12,7 +12,7 @@ import base64
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk" # 파트너님 시트 ID
+    spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
     try:
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
@@ -204,7 +204,7 @@ elif menu == "재고/생산 관리":
         
         sel_code=None; item_info=None; sys_q=0.0
         
-        # [NEW] 생산일 경우 라인 선택 기능 추가
+        # [NEW] 생산일 경우 라인 선택 기능
         prod_line = "-"
         if cat == "생산":
             prod_line = st.selectbox("설비 라인", ["압출1호", "압출2호", "압출3호", "압출4호", "기타"])
@@ -253,8 +253,9 @@ elif menu == "재고/생산 관리":
         if st.button("저장"):
             if sheet_logs:
                 try:
-                    # [NEW] 마지막 컬럼에 prod_line(라인정보) 저장
-                    sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, prod_line])
+                    # [NEW] 저장 구조 변경: [..., 비고, 거래처(L), 라인(M)]
+                    # 생산이므로 거래처는 "-", 라인은 prod_line 저장
+                    sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
                     if cat=="생산" and not df_bom.empty:
@@ -262,7 +263,8 @@ elif menu == "재고/생산 관리":
                             req = qty_in * safe_float(r['소요량'])
                             update_inventory(factory, r['자재코드'], -req)
                             time.sleep(0.5) 
-                            sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{sel_code} 생산", "-"])
+                            # BOM 차감 시에도 라인 정보 기록
+                            sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{sel_code} 생산", "-", prod_line])
                     st.cache_data.clear(); st.success("완료"); st.rerun()
                 except Exception as e: st.error(f"오류: {e}")
 
@@ -294,107 +296,51 @@ elif menu == "재고/생산 관리":
             # 생산 데이터만 필터링
             df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
             
-            # '라인' 컬럼이 없는 옛날 데이터 처리 (L열이 비어있을 경우 대비)
-            if '라인' not in df_prod_log.columns:
-                # 데이터프레임의 마지막 컬럼을 '라인'으로 가정하거나, 없으면 빈값 처리
-                if len(df_prod_log.columns) >= 12:
-                    # 12번째 컬럼(인덱스 11) 이름을 강제로 '라인'으로 변경 시도 (헤더가 있다면)
-                    cols = list(df_prod_log.columns)
-                    cols[11] = '라인' 
-                    df_prod_log.columns = cols
-                else:
-                    df_prod_log['라인'] = "-"
+            # 컬럼 매핑 (M열이 라인)
+            if len(df_prod_log.columns) >= 13:
+                cols = list(df_prod_log.columns)
+                cols[12] = '라인' # M열(인덱스 12)
+                df_prod_log.columns = cols
+            else:
+                df_prod_log['라인'] = "-"
 
-            # 모든 데이터를 문자열로 변환 (검색 오류 방지)
+            # 문자열 변환
             for col in ['코드', '품목명', '라인']:
                 if col in df_prod_log.columns:
                     df_prod_log[col] = df_prod_log[col].astype(str)
 
-            # --- 검색 필터 ---
             with st.expander("🔎 검색 옵션 (클릭해서 열기)", expanded=True):
                 c_s1, c_s2, c_s3, c_s4 = st.columns(4)
-                
-                # 1. 날짜 범위
                 min_dt = pd.to_datetime(df_prod_log['날짜']).min().date() if not df_prod_log.empty else datetime.date.today()
                 sch_date = c_s1.date_input("날짜 범위", [min_dt, datetime.date.today()])
-                
-                # 2. 라인 선택
                 all_lines = ["전체"] + sorted(df_prod_log['라인'].unique().tolist())
                 sch_line = c_s2.selectbox("라인 선택", all_lines)
-                
-                # 3. 품목 코드/명 검색
                 sch_code = c_s3.text_input("품목 코드/명 검색")
-                
-                # 4. 공장
                 sch_fac = c_s4.selectbox("공장 필터", ["전체", "1공장", "2공장"])
 
-            # --- 필터링 로직 ---
             df_res = df_prod_log.copy()
-            
-            # 날짜
             if len(sch_date) == 2:
                 s_d, e_d = sch_date
                 df_res['날짜'] = pd.to_datetime(df_res['날짜'])
                 df_res = df_res[(df_res['날짜'].dt.date >= s_d) & (df_res['날짜'].dt.date <= e_d)]
                 df_res['날짜'] = df_res['날짜'].dt.strftime('%Y-%m-%d')
-            
-            # 라인
-            if sch_line != "전체":
-                df_res = df_res[df_res['라인'] == sch_line]
-            
-            # 품목
-            if sch_code:
-                df_res = df_res[
-                    df_res['코드'].str.contains(sch_code, case=False) | 
-                    df_res['품목명'].str.contains(sch_code, case=False)
-                ]
-            
-            # 공장
-            if sch_fac != "전체":
-                df_res = df_res[df_res['공장'] == sch_fac]
+            if sch_line != "전체": df_res = df_res[df_res['라인'] == sch_line]
+            if sch_code: df_res = df_res[df_res['코드'].str.contains(sch_code, case=False) | df_res['품목명'].str.contains(sch_code, case=False)]
+            if sch_fac != "전체": df_res = df_res[df_res['공장'] == sch_fac]
 
-            # --- 결과 표시 및 인쇄 ---
             st.write(f"📋 검색 결과: {len(df_res)}건")
-            
-            # 보여줄 컬럼 정리
             disp_cols = ['날짜', '시간', '공장', '라인', '코드', '품목명', '수량', '비고']
             final_cols = [c for c in disp_cols if c in df_res.columns]
-            
             st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True)
-            
-            # 총 생산량 합계
             total_prod = df_res['수량'].sum() if not df_res.empty else 0
             st.metric("총 생산량 (검색 결과)", f"{total_prod:,.0f} KG")
 
-            # 인쇄 버튼
             if not df_res.empty:
-                # HTML 테이블 생성
-                html_table = f"""
-                <h2 style='text-align:center;'>생산 실적 기록서</h2>
-                <p style='text-align:center;'>기간: {sch_date[0]} ~ {sch_date[1] if len(sch_date)>1 else sch_date[0]} | 라인: {sch_line}</p>
-                <table style='width:100%; border-collapse: collapse; font-size: 12px; text-align: center;' border='1'>
-                    <thead>
-                        <tr style='background-color: #f2f2f2;'>
-                            <th>날짜</th><th>시간</th><th>공장</th><th>라인</th><th>코드</th><th>품목명</th><th>수량(KG)</th><th>비고</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                """
+                html_table = f"""<h2 style='text-align:center;'>생산 실적 기록서</h2><p style='text-align:center;'>기간: {sch_date[0]} ~ {sch_date[1] if len(sch_date)>1 else sch_date[0]} | 라인: {sch_line}</p><table style='width:100%; border-collapse: collapse; font-size: 12px; text-align: center;' border='1'><thead><tr style='background-color: #f2f2f2;'><th>날짜</th><th>시간</th><th>공장</th><th>라인</th><th>코드</th><th>품목명</th><th>수량(KG)</th><th>비고</th></tr></thead><tbody>"""
                 for _, row in df_res.sort_values(['날짜', '시간']).iterrows():
                     line_val = row.get('라인', '-')
                     html_table += f"<tr><td>{row['날짜']}</td><td>{row['시간']}</td><td>{row['공장']}</td><td>{line_val}</td><td>{row['코드']}</td><td>{row['품목명']}</td><td style='text-align:right;'>{row['수량']:,.0f}</td><td>{row['비고']}</td></tr>"
-                
-                html_table += f"""
-                    </tbody>
-                    <tfoot>
-                        <tr style='font-weight:bold; background-color: #f2f2f2;'>
-                            <td colspan='6'>합계</td>
-                            <td style='text-align:right;'>{total_prod:,.0f}</td>
-                            <td></td>
-                        </tr>
-                    </tfoot>
-                </table>
-                """
+                html_table += f"""</tbody><tfoot><tr style='font-weight:bold; background-color: #f2f2f2;'><td colspan='6'>합계</td><td style='text-align:right;'>{total_prod:,.0f}</td><td></td></tr></tfoot></table>"""
                 st.components.v1.html(create_print_button(html_table, "Production Report"), height=50)
 
     with t3: st.dataframe(df_logs, use_container_width=True)
@@ -642,7 +588,8 @@ elif menu == "영업/출고 관리":
                                 p_nm="-"; p_sp="-"; p_ty="-"; p_co="-"
                                 if not itm_info.empty:
                                     p_nm = itm_info.iloc[0]['품목명']; p_sp = itm_info.iloc[0]['규격']; p_ty = itm_info.iloc[0]['타입']; p_co = itm_info.iloc[0]['색상']
-                                sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], p_nm, p_sp, p_ty, p_co, -safe_float(row['수량']), f"주문출고({tgt_out})", "-"])
+                                # [NEW] 출고 확정 시: 거래처(L열)에는 거래처명, 라인(M열)에는 "-"
+                                sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], p_nm, p_sp, p_ty, p_co, -safe_float(row['수량']), f"주문출고({tgt_out})", cli, "-"])
                                 time.sleep(0.5)
                             time.sleep(1)
                             all_records = sheet_orders.get_all_records()
