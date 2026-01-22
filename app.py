@@ -61,20 +61,28 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# --- 3. 재고 업데이트 ---
+# --- 3. 재고 업데이트 (통합 창고 로직 적용) ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
         time.sleep(1)
         cells = sheet_inventory.findall(str(code))
         target = None
-        for c in cells:
-            if sheet_inventory.cell(c.row, 1).value == factory:
-                target = c; break
+        
+        # [수정됨] 공장 구분 없이 코드가 일치하면 해당 재고를 사용 (통합 창고 개념)
+        # findall로 찾은 셀 중, 실제 코드 컬럼(2번째 열)에 있는 것인지 확인
+        if cells:
+            for c in cells:
+                if c.col == 2: # B열(코드)인지 확인
+                    target = c
+                    break
+        
         if target:
+            # 기존 재고가 있으면 (어느 공장이든 상관없이) 수량 업데이트
             curr = safe_float(sheet_inventory.cell(target.row, 7).value)
             sheet_inventory.update_cell(target.row, 7, curr + qty)
         else:
+            # 신규 재고 생성 (이때는 입력된 공장 정보를 라벨로 사용)
             sheet_inventory.append_row([factory, code, p_name, p_spec, p_type, p_color, qty])
     except: pass
 
@@ -176,11 +184,12 @@ if menu == "대시보드":
 elif menu == "재고/생산 관리":
     with st.sidebar:
         st.markdown("### 📝 작업 입력")
-        cat = st.selectbox("구분", ["입고", "생산", "이동", "재고실사"])
+        # 🔥 [수정] '이동' 삭제 (통합 창고이므로 불필요)
+        cat = st.selectbox("구분", ["입고", "생산", "재고실사"])
         
         sel_code=None; item_info=None; sys_q=0.0
         
-        # 설비 라인 선택
+        # 설비 라인 선택 (공장별 맞춤)
         prod_line = "-"
         if cat == "생산":
             line_options = []
@@ -193,13 +202,13 @@ elif menu == "재고/생산 관리":
         if not df_items.empty:
             df_f = df_items.copy()
             
-            # 🔥 [수정 1] 반제품 검색 허용
+            # 필터: 반제품 포함
             if cat=="입고": 
                 df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": 
                 df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
             
-            # 🔥 [수정 2] 그룹 분류 로직 (반제품 추가)
+            # 그룹 분류 (반제품 추가)
             def get_group(row):
                 name = str(row['품목명']).upper()
                 grp = str(row['구분'])
@@ -217,7 +226,7 @@ elif menu == "재고/생산 관리":
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
                 
-                # 그룹별 선택 로직 (문자열 변환으로 에러 방지)
+                # 그룹별 선택 로직
                 if grp == "반제품":
                     p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].astype(str).unique()))
                     final = df_step1[df_step1['품목명']==p_name]
@@ -228,7 +237,6 @@ elif menu == "재고/생산 관리":
                     spc = st.selectbox("2.규격", sorted(df_step1['규격'].astype(str).unique())) if len(df_step1['규격'].unique())>1 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    # 일반 제품 (KA, KG)
                     typ = st.selectbox("2.타입", sorted(df_step1['타입'].astype(str).unique()))
                     df_step2 = df_step1[df_step1['타입']==typ]
                     clr = st.selectbox("3.색상", sorted(df_step2['색상'].astype(str).unique()))
@@ -239,27 +247,34 @@ elif menu == "재고/생산 관리":
                 if not final.empty:
                     item_info = final.iloc[0]; sel_code = item_info['코드']
                     st.success(f"선택: {sel_code}")
+                    # 통합 재고이므로 팩토리 구분 없이 전체 수량 합계 표시 (참고용)
                     if cat=="재고실사" and not df_inventory.empty:
-                        r = df_inventory[(df_inventory['공장']==factory)&(df_inventory['코드'].astype(str)==str(sel_code))]
-                        if not r.empty: sys_q = safe_float(r.iloc[0]['현재고'])
-                        st.info(f"전산: {sys_q}")
+                        # 전체 통합 재고 조회
+                        inv_rows = df_inventory[df_inventory['코드'].astype(str)==str(sel_code)]
+                        sys_q = inv_rows['현재고'].apply(safe_float).sum()
+                        st.info(f"전산 재고(통합): {sys_q}")
         
         qty_in = st.number_input("수량") if cat != "재고실사" else 0.0
         note_in = st.text_input("비고")
         if cat == "재고실사":
-            real = st.number_input("실사값", value=float(sys_q))
+            real = st.number_input("실사값(통합)", value=float(sys_q))
             qty_in = real - sys_q
             note_in = f"[실사] {note_in}"
             
         if st.button("저장"):
             if sheet_logs:
                 try:
+                    # [저장 구조] -> [..., 비고, 거래처(L), 라인(M)]
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
+                    
+                    # 수량 반영 (통합 창고 로직)
                     chg = qty_in if cat in ["입고","생산","재고실사"] else -qty_in
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
+                    
                     if cat=="생산" and not df_bom.empty:
                         for i,r in df_bom[df_bom['제품코드'].astype(str)==str(sel_code)].iterrows():
                             req = qty_in * safe_float(r['소요량'])
+                            # BOM 차감 (통합 창고에서 자동 차감)
                             update_inventory(factory, r['자재코드'], -req)
                             time.sleep(0.5) 
                             sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{sel_code} 생산", "-", prod_line])
@@ -276,9 +291,13 @@ elif menu == "재고/생산 관리":
             if not df_items.empty:
                 cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict()
                 df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
+            
+            # [수정] 통합 창고이므로 재고 현황에서도 공장 필터를 기본적으로 '전체'로 두거나, 구분 없이 보여주는 게 좋음
+            # 여기서는 편의상 필터 기능을 유지하되, 사용자가 '전체'를 보면 통합 재고를 볼 수 있음
             c1, c2 = st.columns(2)
-            fac_f = c1.radio("공장", ["전체", "1공장", "2공장"], horizontal=True)
+            fac_f = c1.radio("공장 (위치 확인용)", ["전체", "1공장", "2공장"], horizontal=True)
             cat_f = c2.radio("품목", ["전체", "제품", "반제품", "원자재"], horizontal=True)
+            
             if fac_f != "전체": df_v = df_v[df_v['공장']==fac_f]
             if cat_f != "전체": 
                 if cat_f=="제품": df_v = df_v[df_v['구분'].isin(['제품','완제품'])]
@@ -399,6 +418,7 @@ elif menu == "영업/출고 관리":
                 def format_ord(ord_id):
                     info = order_dict.get(ord_id)
                     return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
+
                 tgt = st.selectbox("수정/삭제할 주문 선택", pend['주문번호'].unique(), format_func=format_ord)
                 original_df = pend[pend['주문번호']==tgt].copy()
                 if not df_items.empty:
@@ -406,6 +426,7 @@ elif menu == "영업/출고 관리":
                     original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
                 else: original_df['타입'] = "-"
                 if 'LOT번호' not in original_df.columns: original_df['LOT번호'] = ""
+
                 editor_cols = ['팔레트번호', '코드', '품목명', '타입', '수량', 'LOT번호', '비고']
                 edited_df = st.data_editor(
                     original_df[editor_cols], num_rows="dynamic", key="pallet_editor", use_container_width=True, disabled=["타입"]
@@ -458,6 +479,7 @@ elif menu == "영업/출고 관리":
                 def format_ord_prt(ord_id):
                     info = order_dict_prt.get(ord_id)
                     return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
+
                 tgt_p = st.selectbox("출력할 주문", pend['주문번호'].unique(), key='prt_sel', format_func=format_ord_prt)
                 dp = pend[pend['주문번호']==tgt_p].copy()
                 if not dp.empty:
