@@ -328,7 +328,7 @@ elif menu == "재고/생산 관리":
             st.markdown("---")
             st.subheader("📉 재고 실사 및 조정 내역")
             df_audit = df_logs[df_logs['구분'].isin(['재고실사', '재고조정'])].copy()
-            if not df_audit.empty: st.dataframe(df_audit, use_container_width=True)
+            if not df_audit.empty: st.dataframe(df_audit.tail(5).sort_index(ascending=False), use_container_width=True)
             else: st.info("재고 실사 기록이 없습니다.")
 
 # [2] 영업/출고 관리
@@ -529,7 +529,7 @@ elif menu == "영업/출고 관리":
                             st.caption("▼ 미리보기")
                             st.components.v1.html(preview_diamond, height=300, scrolling=True)
 
-                        # [2] 신규 표준 텍스트 라벨
+                        # [2] 신규 표준 텍스트 라벨 (수정됨: 가로방향, 테두리 없음, 글자크기 통일)
                         with st.expander("📄 표준 텍스트 라벨 (신규)", expanded=True):
                             labels_html_text = ""
                             for plt_num, group in dp.groupby('팔레트번호'):
@@ -538,44 +538,45 @@ elif menu == "영업/출고 관리":
                                 
                                 label_div = f"""
                                 <div class="page-break" style="
-                                    border: 3px solid black; 
-                                    margin: 20px auto;
-                                    width: 95%; 
-                                    height: 95vh; 
-                                    display: flex; 
-                                    flex-direction: column; 
-                                    justify-content: space-evenly; 
-                                    align-items: center; 
+                                    border: none;
+                                    width: 100%;
+                                    height: 95vh;
+                                    display: flex;
+                                    flex-direction: column;
+                                    justify-content: center;
+                                    align-items: center;
                                     text-align: center;
                                     font-family: 'Times New Roman', serif;
                                     font-weight: bold;
-                                    padding: 20px;
+                                    padding: 10px;
                                     box-sizing: border-box;
                                 ">
-                                    <div style="font-size: 60px; text-transform: uppercase; width:100%;">
+                                    <div style="font-size: 50px; text-transform: uppercase; width:100%; margin-bottom: 40px;">
                                         {cli}
                                     </div>
-                                    <div style="width: 80%; display: flex; justify-content: space-between; font-size: 70px; margin: 50px 0;">
+
+                                    <div style="width: 90%; display: flex; justify-content: space-between; font-size: 50px; margin-bottom: 40px;">
                                         <span>{p_code}</span>
                                         <span>{p_qty:,.0f}KG</span>
                                     </div>
-                                    <div style="font-size: 40px; width: 100%;">
-                                        <div style="margin-bottom: 30px;">&lt;PLASTIC ABRASIVE MEDIA&gt;</div>
-                                        <div style="margin-bottom: 15px;">PLT # : {plt_num}/{tot_plt}</div>
+
+                                    <div style="font-size: 45px; width: 100%; line-height: 1.6;">
+                                        <div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div>
+                                        <div>PLT # : {plt_num}/{tot_plt}</div>
                                         <div>TOTAL : {p_qty:,.0f} KG</div>
                                     </div>
                                 </div>
                                 """
                                 labels_html_text += label_div
-
-                            btn_lbl_t = create_print_button(labels_html_text, "Standard Labels", "portrait")
+                            
+                            # ⚠️ 여기서 "landscape"로 변경됨 (가로 인쇄)
+                            btn_lbl_t = create_print_button(labels_html_text, "Standard Labels", "landscape")
                             st.components.v1.html(btn_lbl_t, height=50)
                             
                             # 미리보기
-                            preview_text = labels_html_text.replace('height: 95vh;', 'height: 300px; border: 2px solid #ccc; margin-bottom: 20px;')
-                            preview_text = preview_text.replace('font-size: 60px;', 'font-size: 20px;')
-                            preview_text = preview_text.replace('font-size: 70px;', 'font-size: 24px;')
-                            preview_text = preview_text.replace('font-size: 40px;', 'font-size: 14px;')
+                            preview_text = labels_html_text.replace('height: 95vh;', 'height: 300px; border: 1px dashed #ccc; margin-bottom: 20px;')
+                            preview_text = preview_text.replace('font-size: 50px;', 'font-size: 20px;')
+                            preview_text = preview_text.replace('font-size: 45px;', 'font-size: 18px;')
                             st.caption("▼ 미리보기")
                             st.components.v1.html(preview_text, height=400, scrolling=True)
 
