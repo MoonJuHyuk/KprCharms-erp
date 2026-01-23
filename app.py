@@ -7,7 +7,7 @@ import os
 import time
 import altair as alt
 import base64
-import numpy as np # NaN 처리를 위해 추가
+import numpy as np # 데이터 청소용
 
 # --- 1. 구글 시트 연결 ---
 @st.cache_resource
@@ -41,7 +41,7 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 ---
+# --- 2. 데이터 로딩 (NaN 자동 청소 기능 추가) ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
@@ -50,7 +50,10 @@ def load_data():
         if s:
             for attempt in range(5):
                 try:
-                    data.append(pd.DataFrame(s.get_all_records()))
+                    df = pd.DataFrame(s.get_all_records())
+                    # 🔥 [핵심 수정] 가져온 데이터에서 NaN(빈 값)을 빈 문자열로 싹 청소
+                    df = df.fillna("")
+                    data.append(df)
                     break
                 except:
                     time.sleep(1)
@@ -212,7 +215,6 @@ elif menu == "재고/생산 관리":
             if not df_f.empty:
                 grp_list = sorted(list(set(df_f['Group'])))
                 grp = st.selectbox("1.그룹", grp_list)
-                
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
                 
@@ -333,7 +335,6 @@ elif menu == "재고/생산 관리":
             if sch_fac != "전체": df_res = df_res[df_res['공장'] == sch_fac]
 
             st.write(f"📋 검색 결과: {len(df_res)}건")
-            # 🔥 '타입' 표시
             disp_cols = ['날짜', '시간', '공장', '라인', '코드', '품목명', '타입', '수량', '비고']
             final_cols = [c for c in disp_cols if c in df_res.columns]
             st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True)
@@ -508,8 +509,8 @@ elif menu == "영업/출고 관리":
                                 remaining_data = [r for r in all_records if str(r['주문번호']) != str(tgt)]
                                 base_info = original_df.iloc[0]
                                 new_rows = []
-                                # 🔥 [수정] 빈 행 또는 NaN 안전 처리
                                 for _, row in edited_df.iterrows():
+                                    # 🔥 [빈 값 안전 처리] NaN, None, 빈문자열 체크
                                     if pd.isna(row['코드']) or row['코드'] == "" or row['코드'] == "None": continue
                                     qty_val = 0.0
                                     try: qty_val = float(row['수량'])
