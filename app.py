@@ -8,54 +8,90 @@ import time
 import altair as alt
 import base64
 
-# --- 1. 구글 시트 연결 ---
+# --- 1. 구글 시트 연결 (연결 안정성 강화) ---
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
+    
+    creds = None
     try:
+        # 1. Streamlit Cloud 배포 환경
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
+        # 2. 로컬 개발 환경
+        elif os.path.exists('key.json'):
+            creds = Credentials.from_service_account_file('key.json', scopes=scopes)
+            
+        if creds:
             client = gspread.authorize(creds)
             return client.open_by_key(spreadsheet_id)
-    except Exception: pass
-    key_file = 'key.json'
-    if os.path.exists(key_file):
-        creds = Credentials.from_service_account_file(key_file, scopes=scopes)
-        client = gspread.authorize(creds)
-        return client.open_by_key(spreadsheet_id)
+    except Exception as e:
+        print(f"Connection Error: {e}")
+        return None
     return None
 
+# 전역 연결 객체 (처음에 한 번 시도)
 doc = get_connection()
 
-# 안전하게 시트 가져오기
-def get_sheet(doc, name):
-    try: return doc.worksheet(name)
-    except: return None
+# 안전하게 시트 가져오기 헬퍼 함수
+def get_sheet_object(doc_obj, sheet_name):
+    try:
+        return doc_obj.worksheet(sheet_name)
+    except:
+        return None
 
-sheet_items = get_sheet(doc, 'Items')
-sheet_inventory = get_sheet(doc, 'Inventory')
-sheet_logs = get_sheet(doc, 'Logs')
-sheet_bom = get_sheet(doc, 'BOM')
-sheet_orders = get_sheet(doc, 'Orders')
+# 초기 시트 로드 (실패 시 None일 수 있음 -> load_data에서 복구 시도)
+sheet_items = get_sheet_object(doc, 'Items')
+sheet_inventory = get_sheet_object(doc, 'Inventory')
+sheet_logs = get_sheet_object(doc, 'Logs')
+sheet_bom = get_sheet_object(doc, 'BOM')
+sheet_orders = get_sheet_object(doc, 'Orders')
 
-# --- 2. 데이터 로딩 ---
+# --- 2. 데이터 로딩 (재시도 로직 대폭 강화) ---
 @st.cache_data(ttl=60)
 def load_data():
-    data = []
-    sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
-    for s in sheets:
+    # 시트 이름 정의
+    sheet_names = ['Items', 'Inventory', 'Logs', 'BOM', 'Orders']
+    # 전역 변수 재연결 시도용
+    global sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders
+    current_sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
+    
+    data_frames = []
+    
+    # 만약 연결이 끊겨있다면 재연결 시도
+    local_doc = doc
+    if local_doc is None:
+        local_doc = get_connection()
+
+    for i, name in enumerate(sheet_names):
+        s = current_sheets[i]
+        
+        # 시트 객체가 없으면 다시 가져오기 시도
+        if s is None and local_doc is not None:
+            s = get_sheet_object(local_doc, name)
+            # 전역 변수 업데이트 (다음에 재사용)
+            if i == 0: sheet_items = s
+            elif i == 1: sheet_inventory = s
+            elif i == 2: sheet_logs = s
+            elif i == 3: sheet_bom = s
+            elif i == 4: sheet_orders = s
+
+        df = pd.DataFrame()
         if s:
-            for attempt in range(3):
+            # 🔥 [강화된 재시도 로직] 5번까지 시도
+            for attempt in range(5):
                 try:
-                    data.append(pd.DataFrame(s.get_all_records()))
-                    break
-                except:
-                    time.sleep(1)
-                    if attempt == 2: data.append(pd.DataFrame())
-        else: data.append(pd.DataFrame())
-    return tuple(data)
+                    records = s.get_all_records()
+                    df = pd.DataFrame(records)
+                    break # 성공하면 반복 종료
+                except Exception:
+                    time.sleep(1 + attempt) # 실패 시 1초, 2초... 대기 후 재시도
+        
+        data_frames.append(df)
+        
+    return tuple(data_frames)
 
 def safe_float(val):
     try: return float(val)
@@ -66,11 +102,12 @@ def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_c
     if not sheet_inventory: return
     try:
         time.sleep(1)
+        # 통합 창고: 공장 구분 없이 코드만으로 찾기
         cells = sheet_inventory.findall(str(code))
         target = None
         if cells:
             for c in cells:
-                if c.col == 2:
+                if c.col == 2: # B열(코드)인지 확인
                     target = c; break
         
         if target:
@@ -137,7 +174,9 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
+# 🔥 [핵심] 데이터 로딩 호출 (여기서 5번 재시도 함)
 df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
+
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
 # --- 사이드바 ---
@@ -173,6 +212,8 @@ if menu == "대시보드":
                 daily_prod = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜').tail(7)
                 chart = alt.Chart(daily_prod).mark_bar().encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
+    else:
+        st.info("데이터를 불러오는 중입니다... (잠시 후 새로고침 해주세요)")
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
@@ -337,14 +378,11 @@ elif menu == "재고/생산 관리":
             total_prod = df_res['수량'].sum() if not df_res.empty else 0
             st.metric("총 생산량 (검색 결과)", f"{total_prod:,.0f} KG")
 
-            # 🔥 [신규 기능] 라인 정보 간편 수정 (재고 영향 없음)
             st.markdown("---")
             st.subheader("🛠️ 라인 정보 간편 수정")
             if not df_res.empty:
-                # 검색된 결과 내에서 선택
                 edit_opts = {}
                 for idx, row in df_res.sort_values(['날짜', '시간'], ascending=False).iterrows():
-                    # GSheet Row는 index + 2 (헤더 때문)
                     real_row = idx + 2
                     key = f"No.{real_row} | {row['날짜']} {row['품목명']} ({row['수량']}kg) - 현재: {row['라인']}"
                     edit_opts[key] = real_row
@@ -352,18 +390,16 @@ elif menu == "재고/생산 관리":
                 target_key = st.selectbox("수정할 기록 선택", list(edit_opts.keys()))
                 target_row_num = edit_opts[target_key]
                 
-                # 라인 목록 (공장별)
                 mod_lines = []
-                if "1공장" in target_key: # 텍스트에 공장 정보는 없지만, 현재 선택된 factory 변수 기준 or 전체
+                if "1공장" in target_key: 
                     mod_lines = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
-                else: # 2공장 또는 전체일 때 포괄적 목록
+                else: 
                     mod_lines = [f"압출{i}호" for i in range(1, 7)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
                 
                 new_line_val = st.selectbox("변경할 라인 선택", mod_lines)
                 
                 if st.button("라인 수정 적용"):
                     try:
-                        # 13번째 컬럼(M열)이 라인
                         sheet_logs.update_cell(target_row_num, 13, new_line_val)
                         st.success("라인 정보가 수정되었습니다!")
                         time.sleep(1)
