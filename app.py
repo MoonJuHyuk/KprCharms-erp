@@ -41,7 +41,7 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 (NaN 자동 청소 기능 추가) ---
+# --- 2. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
@@ -51,8 +51,7 @@ def load_data():
             for attempt in range(5):
                 try:
                     df = pd.DataFrame(s.get_all_records())
-                    # 🔥 [핵심 수정] 가져온 데이터에서 NaN(빈 값)을 빈 문자열로 싹 청소
-                    df = df.fillna("")
+                    df = df.fillna("") # 빈 값 청소
                     data.append(df)
                     break
                 except:
@@ -510,7 +509,6 @@ elif menu == "영업/출고 관리":
                                 base_info = original_df.iloc[0]
                                 new_rows = []
                                 for _, row in edited_df.iterrows():
-                                    # 🔥 [빈 값 안전 처리] NaN, None, 빈문자열 체크
                                     if pd.isna(row['코드']) or row['코드'] == "" or row['코드'] == "None": continue
                                     qty_val = 0.0
                                     try: qty_val = float(row['수량'])
@@ -648,12 +646,21 @@ elif menu == "영업/출고 관리":
                     code_to_type = df_items.set_index('코드')['타입'].to_dict()
                     d_out['타입'] = d_out['코드'].map(code_to_type).fillna('-')
                 else: d_out['타입'] = "-"
+                
                 cols_to_show = ['코드','품목명','타입','수량','팔레트번호']
                 if 'LOT번호' in d_out.columns: cols_to_show.append('LOT번호')
                 st.write("▼ 출고 내역 확인")
                 st.dataframe(d_out[cols_to_show], use_container_width=True)
+                
                 total_w = d_out['수량'].sum()
-                st.metric("총 출고 중량", f"{total_w:,.0f} kg")
+                
+                # 🔥 [신규] 출고 날짜 선택 기능 추가
+                c_out1, c_out2 = st.columns([1, 2])
+                with c_out1:
+                    real_out_date = st.date_input("실제 출고일", datetime.datetime.now())
+                with c_out2:
+                    st.metric("총 출고 중량", f"{total_w:,.0f} kg")
+                
                 if st.button("🚀 출고 확정 (재고 차감)", type="primary"):
                     with st.spinner("출고 처리 중..."):
                         try:
@@ -663,7 +670,20 @@ elif menu == "영업/출고 관리":
                                 p_nm="-"; p_sp="-"; p_ty="-"; p_co="-"
                                 if not itm_info.empty:
                                     p_nm = itm_info.iloc[0]['품목명']; p_sp = itm_info.iloc[0]['규격']; p_ty = itm_info.iloc[0]['타입']; p_co = itm_info.iloc[0]['색상']
-                                sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], p_nm, p_sp, p_ty, p_co, -safe_float(row['수량']), f"주문출고({tgt_out})", cli, "-"])
+                                
+                                # 🔥 선택된 'real_out_date'로 로그 저장
+                                sheet_logs.append_row([
+                                    real_out_date.strftime('%Y-%m-%d'), # 사용자가 선택한 날짜
+                                    time_str, 
+                                    factory, 
+                                    "출고", 
+                                    row['코드'], 
+                                    p_nm, p_sp, p_ty, p_co, 
+                                    -safe_float(row['수량']), 
+                                    f"주문출고({tgt_out})", 
+                                    cli, 
+                                    "-"
+                                ])
                                 time.sleep(0.5)
                             time.sleep(1)
                             all_records = sheet_orders.get_all_records()
