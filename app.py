@@ -676,6 +676,7 @@ elif menu == "영업/출고 관리":
                             pallet_summary = group.groupby('코드')['수량'].sum().reset_index()
                             
                             row_count = len(pallet_summary)
+                            # 🔥 [Smart Sizing] 업체명과 동일한 60px을 기본으로 하되, 줄이 많아지면 축소
                             if row_count <= 2: font_size = "60px"
                             elif row_count <= 4: font_size = "50px"
                             else: font_size = "35px"
@@ -854,7 +855,18 @@ elif menu == "🔍 이력/LOT 검색":
         # 🔥 [신규 추가] 조회 결과 인쇄 버튼
         if not df_search.empty:
             html_table = f"<h2>출고 이력 조회 결과</h2><p>조회일: {datetime.date.today()}</p>"
-            html_table += "<table style='width:100%; border-collapse: collapse; text-align: center;' border='1'>"
+            html_table += "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 12px;' border='1'>"
+            
+            # 컬럼 너비 설정 (LOT번호 넓게)
+            html_table += "<colgroup>"
+            for c in valid_cols:
+                if c == 'LOT번호': html_table += "<col style='width: 25%;'>"
+                elif c == '품목명': html_table += "<col style='width: 20%;'>"
+                elif c == '거래처': html_table += "<col style='width: 15%;'>"
+                elif c == '비고': html_table += "<col style='width: 15%;'>"
+                else: html_table += "<col>" 
+            html_table += "</colgroup>"
+
             html_table += "<thead><tr style='background-color: #f2f2f2;'>"
             for c in valid_cols: html_table += f"<th>{c}</th>"
             html_table += "</tr></thead><tbody>"
@@ -867,4 +879,4 @@ elif menu == "🔍 이력/LOT 검색":
                 html_table += "</tr>"
             html_table += "</tbody></table>"
             
-            st.components.v1.html(create_print_button(html_table, "Shipment History Search Result"), height=50)
+            st.components.v1.html(create_print_button(html_table, "Shipment History Search Result", orientation="landscape"), height=50)
