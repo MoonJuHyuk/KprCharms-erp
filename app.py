@@ -40,7 +40,7 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 (강력한 데이터 정화 기능 추가) ---
+# --- 2. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
@@ -50,15 +50,9 @@ def load_data():
             for attempt in range(5):
                 try:
                     df = pd.DataFrame(s.get_all_records())
-                    
-                    # 🔥 [핵심 수정] 데이터 정화 (Sanitizing)
-                    # 1. NaN, None, Inf 등 이상한 값을 빈 문자열로 변환
                     df = df.replace([np.inf, -np.inf], np.nan).fillna("")
-                    
-                    # 2. 수량 컬럼이 있다면 강제로 숫자로 변환 (에러나면 0으로)
                     if '수량' in df.columns:
                         df['수량'] = pd.to_numeric(df['수량'], errors='coerce').fillna(0.0)
-                        
                     data.append(df)
                     break
                 except:
@@ -560,14 +554,37 @@ elif menu == "영업/출고 관리":
 
                 tgt_p = st.selectbox("출력할 주문", pend['주문번호'].unique(), key='prt_sel', format_func=format_ord_prt)
                 dp = pend[pend['주문번호']==tgt_p].copy()
+                
                 if not dp.empty:
+                    # [1] 기본 정보
                     cli = dp.iloc[0]['거래처']
                     ex_date = dp.iloc[0]['날짜']
                     ship_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                    
+                    # [2] 🔥 [신규] 출력용 제품명 변경 (Mapping Editor)
+                    st.markdown("#### ✏️ 출력용 제품명 변경 (선택)")
+                    unique_codes = sorted(dp['코드'].unique())
+                    map_data = [{"Internal": c, "Customer_Print_Name": c} for c in unique_codes]
+                    
+                    edited_map = st.data_editor(
+                        pd.DataFrame(map_data),
+                        use_container_width=True,
+                        column_config={
+                            "Internal": st.column_config.TextColumn("시스템 제품명 (수정불가)", disabled=True),
+                            "Customer_Print_Name": st.column_config.TextColumn("📝 고객용 제품명 (수정가능)")
+                        },
+                        hide_index=True
+                    )
+                    
+                    # 매핑 사전 생성
+                    code_map = dict(zip(edited_map['Internal'], edited_map['Customer_Print_Name']))
+
                     c1, c2 = st.columns(2)
                     with c1:
-                        st.markdown("### 📄 Packing List")
+                        st.markdown("### 📄 Packing List (편집 가능)")
                         pl_rows = ""; tot_q = 0; tot_plt = dp['팔레트번호'].nunique()
+                        
+                        # 데이터 생성
                         for plt_num, group in dp.groupby('팔레트번호'):
                             g_len = len(group); is_first = True
                             for _, r in group.iterrows():
@@ -578,61 +595,52 @@ elif menu == "영업/출고 관리":
                                 if not df_items.empty:
                                     inf = df_items[df_items['코드'].astype(str)==str(r['코드'])]
                                     if not inf.empty: clr = inf.iloc[0]['색상']
+                                
+                                # 매핑된 이름 사용
+                                display_name = code_map.get(str(r['코드']), str(r['코드']))
+                                
                                 pl_rows += "<tr>"
                                 if is_first: pl_rows += f"<td rowspan='{g_len}'>{plt_num}</td>"
-                                pl_rows += f"<td>{r['코드']}</td><td align='right'>{r['수량']:,.0f}</td><td align='center'>{clr}</td><td align='center'>{shp}</td><td align='center'>{lot_no}</td><td align='center'>{rem}</td></tr>"
+                                pl_rows += f"<td>{display_name}</td><td align='right'>{r['수량']:,.0f}</td><td align='center'>{clr}</td><td align='center'>{shp}</td><td align='center'>{lot_no}</td><td align='center'>{rem}</td></tr>"
                                 is_first = False; tot_q += r['수량']
-                        html_pl = f"""<div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;"><h2 style="text-align:center;">PACKING LIST</h2><table style="width:100%; margin-bottom:10px;"><tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr><tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr><tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr></table><table style="width:100%; border-collapse: collapse; text-align:center;" border="1"><thead style="background-color:#eee;"><tr><th>PLT</th><th>ITEM NAME</th><th>Q'TY</th><th>COLOR</th><th>SHAPE</th><th>LOT#</th><th>REMARK</th></tr></thead><tbody>{pl_rows}</tbody><tfoot><tr style="font-weight:bold; background-color:#eee;"><td colspan="2">{tot_plt} PLTS</td><td align='right'>{tot_q:,.0f}</td><td colspan="4"></td></tr></tfoot></table></div>"""
-                        btn_html = create_print_button(html_pl, "Packing List", "landscape")
+                        
+                        html_pl_raw = f"""<div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;"><h2 style="text-align:center;">PACKING LIST</h2><table style="width:100%; margin-bottom:10px;"><tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr><tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr><tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr></table><table style="width:100%; border-collapse: collapse; text-align:center;" border="1"><thead style="background-color:#eee;"><tr><th>PLT</th><th>ITEM NAME</th><th>Q'TY</th><th>COLOR</th><th>SHAPE</th><th>LOT#</th><th>REMARK</th></tr></thead><tbody>{pl_rows}</tbody><tfoot><tr style="font-weight:bold; background-color:#eee;"><td colspan="2">{tot_plt} PLTS</td><td align='right'>{tot_q:,.0f}</td><td colspan="4"></td></tr></tfoot></table></div>"""
+                        
+                        # 🔥 편집 가능한 텍스트 영역 제공
+                        final_pl_html = st.text_area("HTML 수정 (필요시)", html_pl_raw, height=300)
+                        
+                        btn_html = create_print_button(final_pl_html, "Packing List", "landscape")
                         st.components.v1.html(btn_html, height=50)
-                        st.components.v1.html(html_pl, height=500, scrolling=True)
 
                     with c2:
-                        st.markdown("### 🏷️ 라벨 선택 인쇄")
-                        with st.expander("🔷 다이아몬드 라벨 (기존)", expanded=True):
-                            labels_html_diamond = ""
-                            for plt_num, group in dp.groupby('팔레트번호'):
-                                p_sum = group['수량'].sum()
-                                svg_content = f"""
-                                <div class="page-break">
-                                    <svg viewBox="0 0 800 600" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-                                        <polygon points="400,20 780,300 400,580 20,300" fill="none" stroke="#003366" stroke-width="15"/>
-                                        <foreignObject x="100" y="120" width="600" height="120">
-                                            <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Arial, sans-serif; font-size: 35px; font-weight: bold; text-align: center; word-wrap: break-word; display: flex; justify-content: center; align-items: center; height: 100%;">
-                                                {cli}
-                                            </div>
-                                        </foreignObject>
-                                        <text x="400" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="80" font-weight="900" fill="black">KPR</text>
-                                        <text x="400" y="365" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="bold">{plt_num}/{tot_plt}</text>
-                                        <text x="400" y="425" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="bold">MADE IN KOREA</text>
-                                    </svg>
-                                </div>
-                                """
-                                labels_html_diamond += svg_content
-                            btn_lbl_d = create_print_button(labels_html_diamond, "Diamond Labels", "landscape")
-                            st.components.v1.html(btn_lbl_d, height=50)
-                            preview_diamond = labels_html_diamond.replace('width="100%" height="100%"', 'width="100%" height="250px"')
-                            st.caption("▼ 미리보기")
-                            st.components.v1.html(preview_diamond, height=300, scrolling=True)
-
+                        st.markdown("### 🏷️ 라벨 (편집 가능)")
                         with st.expander("📄 표준 텍스트 라벨 (신규)", expanded=True):
                             labels_html_text = ""
                             for plt_num, group in dp.groupby('팔레트번호'):
                                 p_qty = group['수량'].sum()
-                                p_code = group.iloc[0]['코드']
+                                
+                                # 🔥 [수정] 혼적 지원: 해당 팔레트의 모든 유니크 코드 가져오기 (매핑된 이름으로)
+                                unique_products = group['코드'].astype(str).unique()
+                                display_names = [code_map.get(c, c) for c in unique_products]
+                                p_code_str = " / ".join(display_names) # 여러 개면 슬래시로 구분
+                                
                                 label_div = f"""
                                 <div class="page-break" style="border: none; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; font-family: 'Times New Roman', serif; font-weight: bold; padding: 10px; box-sizing: border-box;">
                                     <div style="font-size: 50px; text-transform: uppercase; width:100%; margin-bottom: 40px;">{cli}</div>
-                                    <div style="width: 100%; display: flex; justify-content: center; gap: 100px; font-size: 50px; margin-bottom: 40px;"><span>{p_code}</span><span>{p_qty:,.0f}KG</span></div>
+                                    <div style="width: 100%; display: flex; justify-content: center; gap: 50px; font-size: 50px; margin-bottom: 40px;">
+                                        <span>{p_code_str}</span>
+                                        <span>{p_qty:,.0f}KG</span>
+                                    </div>
                                     <div style="font-size: 45px; width: 100%; line-height: 1.6;"><div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div><div>PLT # : {plt_num}/{tot_plt}</div><div>TOTAL : {p_qty:,.0f} KG</div></div>
                                 </div>
                                 """
                                 labels_html_text += label_div
-                            btn_lbl_t = create_print_button(labels_html_text, "Standard Labels", "landscape")
+                            
+                            # 🔥 편집 가능한 텍스트 영역 제공
+                            final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
+                            
+                            btn_lbl_t = create_print_button(final_lbl_html, "Standard Labels", "landscape")
                             st.components.v1.html(btn_lbl_t, height=50)
-                            preview_text = labels_html_text.replace('height: 95vh;', 'height: 300px; border: 1px dashed #ccc; margin-bottom: 20px;').replace('font-size: 50px;', 'font-size: 20px;').replace('font-size: 45px;', 'font-size: 18px;')
-                            st.caption("▼ 미리보기")
-                            st.components.v1.html(preview_text, height=400, scrolling=True)
 
     with tab_out:
         st.subheader("🚚 출고 확정 및 재고 차감")
@@ -659,7 +667,6 @@ elif menu == "영업/출고 관리":
                 
                 total_w = d_out['수량'].sum()
                 
-                # 🔥 [신규] 출고 날짜 선택 기능 추가
                 c_out1, c_out2 = st.columns([1, 2])
                 with c_out1:
                     real_out_date = st.date_input("실제 출고일", datetime.datetime.now())
@@ -676,9 +683,8 @@ elif menu == "영업/출고 관리":
                                 if not itm_info.empty:
                                     p_nm = itm_info.iloc[0]['품목명']; p_sp = itm_info.iloc[0]['규격']; p_ty = itm_info.iloc[0]['타입']; p_co = itm_info.iloc[0]['색상']
                                 
-                                # 🔥 선택된 'real_out_date'로 로그 저장
                                 sheet_logs.append_row([
-                                    real_out_date.strftime('%Y-%m-%d'), # 사용자가 선택한 날짜
+                                    real_out_date.strftime('%Y-%m-%d'), 
                                     time_str, 
                                     factory, 
                                     "출고", 
