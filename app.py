@@ -576,7 +576,6 @@ elif menu == "영업/출고 관리":
                     )
                     code_map = dict(zip(edited_map['Internal'], edited_map['Customer_Print_Name']))
 
-                    # 🔥 [수정] 탭을 사용하여 화면 정리 및 다이아몬드 라벨 복구
                     sub_t1, sub_t2, sub_t3 = st.tabs(["📄 명세서 (Packing List)", "🔷 다이아몬드 라벨", "📑 표준 라벨 (혼적지원)"])
                     
                     with sub_t1:
@@ -608,7 +607,6 @@ elif menu == "영업/출고 관리":
                         st.components.v1.html(btn_html, height=50)
 
                     with sub_t2:
-                        # 🔥 다이아몬드 라벨 복구
                         labels_html_diamond = ""
                         for plt_num, group in dp.groupby('팔레트번호'):
                             p_sum = group['수량'].sum()
@@ -629,7 +627,6 @@ elif menu == "영업/출고 관리":
                             """
                             labels_html_diamond += svg_content
                         
-                        # 미리보기 (작게)
                         st.caption("▼ 미리보기")
                         preview_dia = labels_html_diamond.replace('width="100%" height="100%"', 'width="100%" height="300px"')
                         st.components.v1.html(preview_dia, height=400, scrolling=True)
@@ -637,20 +634,35 @@ elif menu == "영업/출고 관리":
                         st.components.v1.html(btn_lbl_d, height=50)
 
                     with sub_t3:
-                        # 🔥 표준 라벨 (레이아웃 수정됨 - Flex Box 사용)
                         labels_html_text = ""
                         for plt_num, group in dp.groupby('팔레트번호'):
                             p_qty = group['수량'].sum()
-                            unique_products = group['코드'].astype(str).unique()
-                            display_names = [code_map.get(c, c) for c in unique_products]
-                            p_code_str = " / ".join(display_names)
                             
-                            # 🔥 Flex Box로 세로 정렬 및 간격 확보
+                            # 🔥 [핵심 수정] 제품별 한 줄씩 표시 (수량 포함)
+                            # 1. 제품별 합계 구하기
+                            pallet_summary = group.groupby('코드')['수량'].sum().reset_index()
+                            
+                            # 2. 줄 수에 따른 폰트 크기 자동 조절 (Smart Sizing)
+                            row_count = len(pallet_summary)
+                            if row_count <= 2: font_size = "70px"
+                            elif row_count <= 4: font_size = "50px"
+                            else: font_size = "35px"
+                            
+                            # 3. 제품 리스트 HTML 생성
+                            product_lines_html = ""
+                            for _, row in pallet_summary.iterrows():
+                                code = row['코드']
+                                qty = row['수량']
+                                disp_name = code_map.get(str(code), str(code)) # 매핑된 이름
+                                product_lines_html += f"<div style='margin: 10px 0; display:flex; justify-content:center; gap:40px;'><span>{disp_name}</span><span>{qty:,.0f} KG</span></div>"
+
+                            # 4. 전체 라벨 HTML 조립 (테두리 없음, 세로 정렬)
                             label_div = f"""
-                            <div class="page-break" style="border: 2px solid black; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; text-align: center; font-family: 'Arial', sans-serif; font-weight: bold; box-sizing: border-box; padding: 20px;">
+                            <div class="page-break" style="border: none; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; text-align: center; font-family: 'Arial', sans-serif; font-weight: bold; box-sizing: border-box; padding: 20px;">
                                 <div style="font-size: 60px; text-transform: uppercase;">{cli}</div>
-                                <div style="font-size: 80px; margin: 20px 0;">{p_code_str}</div>
-                                <div style="font-size: 70px;">{p_qty:,.0f} KG</div>
+                                <div style="font-size: {font_size}; width:100%;">
+                                    {product_lines_html}
+                                </div>
                                 <div style="font-size: 50px; margin-top: 30px;">
                                     <div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div>
                                     <div style="margin-top: 20px;">PLT # : {plt_num} / {tot_plt}</div>
@@ -660,6 +672,7 @@ elif menu == "영업/출고 관리":
                             """
                             labels_html_text += label_div
                         
+                        # 미리보기
                         st.components.v1.html(labels_html_text, height=400, scrolling=True)
                         with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
                             final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
