@@ -170,21 +170,67 @@ if menu == "대시보드":
     if not df_logs.empty:
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         df_today = df_logs[df_logs['날짜'] == today]
+        
+        # 상단 요약 카드
         k1, k2, k3 = st.columns(3)
-        prod = df_today[df_today['구분']=='생산']['수량'].sum() if '구분' in df_today.columns else 0
-        out = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
-        k1.metric("오늘 생산", f"{prod:,.0f} kg")
-        k2.metric("오늘 출고", f"{out:,.0f} kg")
-        pend = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
-        k3.metric("출고 대기 주문", f"{pend} 건", delta="작업 필요", delta_color="inverse")
+        prod_val = df_today[df_today['구분']=='생산']['수량'].sum() if '구분' in df_today.columns else 0
+        out_val = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
+        pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
+        
+        k1.metric("오늘 총 생산", f"{prod_val:,.0f} kg")
+        k2.metric("오늘 총 출고", f"{out_val:,.0f} kg")
+        k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
         st.markdown("---")
+        
+        # 🔥 [생산 추이 그래프 고도화]
         if '구분' in df_logs.columns:
+            st.subheader("📈 최근 7일 생산 추이 분석")
+            
+            # 1. 필터 선택 (사이드바가 아닌 본문 상단에 배치)
+            col_filter, col_dummy = st.columns([1, 2])
+            with col_filter:
+                filter_opt = st.selectbox("조회 대상 선택", ["전체", "KA 제품", "KG 제품", "KA 반제품", "Compound 반제품"])
+            
+            # 2. 데이터 준비
             df_prod = df_logs[df_logs['구분'] == '생산'].copy()
             if not df_prod.empty:
-                st.subheader("📈 최근 7일 생산 추이")
-                daily_prod = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜').tail(7)
-                chart = alt.Chart(daily_prod).mark_bar().encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=300)
-                st.altair_chart(chart, use_container_width=True)
+                # 텍스트 검색을 위해 문자열로 변환
+                df_prod['품목명'] = df_prod['품목명'].astype(str)
+                df_prod['코드'] = df_prod['코드'].astype(str)
+                
+                # 3. 필터링 로직 적용
+                if filter_opt == "KA 제품":
+                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & df_prod['구분'].isin(['제품','완제품'])]
+                elif filter_opt == "KG 제품":
+                    df_prod = df_prod[df_prod['품목명'].str.contains("KG", case=False) & df_prod['구분'].isin(['제품','완제품'])]
+                elif filter_opt == "KA 반제품":
+                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & df_prod['품목명'].str.contains("반")]
+                elif filter_opt == "Compound 반제품":
+                    df_prod = df_prod[df_prod['품목명'].str.contains("CP", case=False) | df_prod['품목명'].str.contains("COMPOUND", case=False)]
+                
+                # 4. 날짜 및 요일 처리
+                if not df_prod.empty:
+                    df_prod['날짜'] = pd.to_datetime(df_prod['날짜'])
+                    # 요일 매핑 (0:월 ~ 6:일)
+                    weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
+                    df_prod['요일'] = df_prod['날짜'].dt.dayofweek.map(weekday_map)
+                    df_prod['표시날짜'] = df_prod['날짜'].dt.strftime('%m-%d') + " " + df_prod['요일']
+                    
+                    # 5. 집계 (일별 합계)
+                    daily_prod = df_prod.groupby(['날짜', '표시날짜'])['수량'].sum().reset_index().sort_values('날짜').tail(7)
+                    
+                    # 6. 차트 그리기
+                    chart = alt.Chart(daily_prod).mark_bar().encode(
+                        x=alt.X('표시날짜', sort=None, title='날짜 (요일)'),
+                        y=alt.Y('수량', title='생산량 (KG)'),
+                        tooltip=['표시날짜', alt.Tooltip('수량', format=',.0f')]
+                    ).properties(height=350)
+                    
+                    st.altair_chart(chart, use_container_width=True)
+                else:
+                    st.info(f"선택하신 '{filter_opt}'에 해당하는 생산 기록이 없습니다.")
+            else:
+                st.info("생산 기록이 없습니다.")
     else: st.info("데이터를 불러오는 중입니다...")
 
 # [1] 재고/생산 관리
@@ -442,7 +488,6 @@ elif menu == "영업/출고 관리":
     st.title("📑 영업 주문 및 출고 관리")
     if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
     
-    # 🔥 [수정] 탭 구성: 5번 탭 추가 (출고 취소)
     tab_o, tab_p, tab_prt, tab_out, tab_cancel = st.tabs(["📝 1. 주문 등록", "✏️ 2. 팔레트 수정/삭제", "🖨️ 3. 명세서/라벨 인쇄", "🚚 4. 출고 확정", "↩️ 5. 출고 취소(복구)"])
     
     with tab_o:
@@ -830,40 +875,29 @@ elif menu == "영업/출고 관리":
                         except Exception as e: st.error(f"처리 중 오류 발생: {e}")
             else: st.info("출고 대기 중인 주문이 없습니다.")
 
-    # 🔥 [신규] 출고 취소 탭 구현
     with tab_cancel:
         st.subheader("↩️ 출고 취소 (재고 복구)")
         st.warning("⚠️ 이미 출고 확정된 주문을 취소하고 재고를 되돌립니다.")
         
         if not df_orders.empty and '상태' in df_orders.columns:
-            # 완료된 주문만 필터링
             completed = df_orders[df_orders['상태']=='완료']
             if not completed.empty:
-                # 주문 선택 Selectbox
                 unique_comp_ords = completed[['주문번호', '날짜', '거래처']].drop_duplicates().sort_values('날짜', ascending=False)
-                
-                # 주문 ID와 표시 문자열 매핑
                 def format_comp_ord(ord_id):
                     row = unique_comp_ords[unique_comp_ords['주문번호'] == ord_id].iloc[0]
                     return f"{row['날짜']} | {row['거래처']} ({ord_id})"
 
                 target_cancel_id = st.selectbox("취소할 출고 건 선택", unique_comp_ords['주문번호'].unique(), format_func=format_comp_ord)
-                
-                # 선택된 주문 상세 보여주기
                 cancel_details = completed[completed['주문번호'] == target_cancel_id]
                 st.write("▼ 취소 대상 품목 (재고가 다시 늘어납니다)")
                 st.dataframe(cancel_details[['코드', '품목명', '수량', '팔레트번호']], use_container_width=True)
                 
-                # 취소 실행 버튼
                 if st.button("🚫 출고 취소 및 재고 복구", type="primary"):
                     with st.spinner("취소 처리 중..."):
                         try:
-                            # 1. 재고 복구 (수량 더하기) & 로그 기록
                             for idx, row in cancel_details.iterrows():
                                 restore_qty = safe_float(row['수량'])
-                                update_inventory(factory, row['코드'], restore_qty) # +qty
-                                
-                                # 로그 남기기
+                                update_inventory(factory, row['코드'], restore_qty)
                                 sheet_logs.append_row([
                                     date.strftime('%Y-%m-%d'), 
                                     time_str, 
@@ -872,36 +906,25 @@ elif menu == "영업/출고 관리":
                                     row['코드'], 
                                     row['품목명'], 
                                     "-", "-", "-", 
-                                    restore_qty, # +qty for log
+                                    restore_qty, 
                                     f"주문복구({target_cancel_id})", 
                                     "-", "-"
                                 ])
                                 time.sleep(0.5)
 
-                            # 2. 주문 상태 변경 (완료 -> 준비)
                             time.sleep(1)
                             all_records = sheet_orders.get_all_records()
                             for r in all_records:
-                                if str(r['주문번호']) == str(target_cancel_id):
-                                    r['상태'] = '준비'
+                                if str(r['주문번호']) == str(target_cancel_id): r['상태'] = '준비'
                             
-                            # 시트 업데이트
                             headers = list(all_records[0].keys()) if all_records else ['주문번호', '날짜', '거래처', '코드', '품목명', '수량', '팔레트번호', '상태', '비고', 'LOT번호']
                             update_values = [headers]
                             for r in all_records: update_values.append([r.get(h, "") for h in headers])
                             sheet_orders.clear(); time.sleep(1); sheet_orders.update(update_values)
-                            
-                            st.cache_data.clear()
-                            st.success(f"취소 완료! 주문 상태가 '준비'로 변경되었으며, 재고가 복구되었습니다.")
-                            time.sleep(3)
-                            st.rerun()
-                            
-                        except Exception as e:
-                            st.error(f"취소 중 오류 발생: {e}")
-            else:
-                st.info("취소할 수 있는 출고 완료 건이 없습니다.")
-        else:
-            st.info("데이터가 없습니다.")
+                            st.cache_data.clear(); st.success(f"취소 완료! 주문 상태가 '준비'로 변경되었으며, 재고가 복구되었습니다."); time.sleep(3); st.rerun()
+                        except Exception as e: st.error(f"취소 중 오류 발생: {e}")
+            else: st.info("취소할 수 있는 출고 완료 건이 없습니다.")
+        else: st.info("데이터가 없습니다.")
 
 # [5] 이력/LOT 검색
 elif menu == "🔍 이력/LOT 검색":
@@ -937,11 +960,9 @@ elif menu == "🔍 이력/LOT 검색":
         valid_cols = [c for c in cols if c in df_search.columns]
         st.dataframe(df_search[valid_cols].sort_values('날짜', ascending=False), use_container_width=True)
         
-        # 🔥 [신규 추가] 조회 결과 인쇄 버튼
         if not df_search.empty:
             html_table = f"<h2>출고 이력 조회 결과</h2><p>조회일: {datetime.date.today()}</p>"
             html_table += "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 12px; table-layout: fixed;' border='1'>"
-            
             html_table += "<colgroup>"
             html_table += "<col style='width: 10%;'>" # 날짜
             html_table += "<col style='width: 15%;'>" # 거래처
@@ -952,7 +973,6 @@ elif menu == "🔍 이력/LOT 검색":
             html_table += "<col style='width: 7%;'>"  # 상태
             html_table += "<col style='width: 10%;'>" # 비고
             html_table += "</colgroup>"
-
             html_table += "<thead><tr style='background-color: #f2f2f2;'>"
             for c in valid_cols: html_table += f"<th>{c}</th>"
             html_table += "</tr></thead><tbody>"
@@ -964,5 +984,4 @@ elif menu == "🔍 이력/LOT 검색":
                     html_table += f"<td>{val}</td>"
                 html_table += "</tr>"
             html_table += "</tbody></table>"
-            
             st.components.v1.html(create_print_button(html_table, "Shipment History Search Result", orientation="landscape"), height=50)
