@@ -8,90 +8,54 @@ import time
 import altair as alt
 import base64
 
-# --- 1. 구글 시트 연결 (연결 안정성 강화) ---
+# --- 1. 구글 시트 연결 ---
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
-    
-    creds = None
     try:
-        # 1. Streamlit Cloud 배포 환경
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
-        # 2. 로컬 개발 환경
-        elif os.path.exists('key.json'):
-            creds = Credentials.from_service_account_file('key.json', scopes=scopes)
-            
-        if creds:
             client = gspread.authorize(creds)
             return client.open_by_key(spreadsheet_id)
-    except Exception as e:
-        print(f"Connection Error: {e}")
-        return None
+    except Exception: pass
+    key_file = 'key.json'
+    if os.path.exists(key_file):
+        creds = Credentials.from_service_account_file(key_file, scopes=scopes)
+        client = gspread.authorize(creds)
+        return client.open_by_key(spreadsheet_id)
     return None
 
-# 전역 연결 객체 (처음에 한 번 시도)
 doc = get_connection()
 
-# 안전하게 시트 가져오기 헬퍼 함수
-def get_sheet_object(doc_obj, sheet_name):
-    try:
-        return doc_obj.worksheet(sheet_name)
-    except:
-        return None
+# 안전하게 시트 가져오기
+def get_sheet(doc, name):
+    try: return doc.worksheet(name)
+    except: return None
 
-# 초기 시트 로드 (실패 시 None일 수 있음 -> load_data에서 복구 시도)
-sheet_items = get_sheet_object(doc, 'Items')
-sheet_inventory = get_sheet_object(doc, 'Inventory')
-sheet_logs = get_sheet_object(doc, 'Logs')
-sheet_bom = get_sheet_object(doc, 'BOM')
-sheet_orders = get_sheet_object(doc, 'Orders')
+sheet_items = get_sheet(doc, 'Items')
+sheet_inventory = get_sheet(doc, 'Inventory')
+sheet_logs = get_sheet(doc, 'Logs')
+sheet_bom = get_sheet(doc, 'BOM')
+sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 (재시도 로직 대폭 강화) ---
+# --- 2. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
-    # 시트 이름 정의
-    sheet_names = ['Items', 'Inventory', 'Logs', 'BOM', 'Orders']
-    # 전역 변수 재연결 시도용
-    global sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders
-    current_sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
-    
-    data_frames = []
-    
-    # 만약 연결이 끊겨있다면 재연결 시도
-    local_doc = doc
-    if local_doc is None:
-        local_doc = get_connection()
-
-    for i, name in enumerate(sheet_names):
-        s = current_sheets[i]
-        
-        # 시트 객체가 없으면 다시 가져오기 시도
-        if s is None and local_doc is not None:
-            s = get_sheet_object(local_doc, name)
-            # 전역 변수 업데이트 (다음에 재사용)
-            if i == 0: sheet_items = s
-            elif i == 1: sheet_inventory = s
-            elif i == 2: sheet_logs = s
-            elif i == 3: sheet_bom = s
-            elif i == 4: sheet_orders = s
-
-        df = pd.DataFrame()
+    data = []
+    sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
+    for s in sheets:
         if s:
-            # 🔥 [강화된 재시도 로직] 5번까지 시도
-            for attempt in range(5):
+            for attempt in range(5): # 재시도 5회로 강화
                 try:
-                    records = s.get_all_records()
-                    df = pd.DataFrame(records)
-                    break # 성공하면 반복 종료
-                except Exception:
-                    time.sleep(1 + attempt) # 실패 시 1초, 2초... 대기 후 재시도
-        
-        data_frames.append(df)
-        
-    return tuple(data_frames)
+                    data.append(pd.DataFrame(s.get_all_records()))
+                    break
+                except:
+                    time.sleep(1)
+                    if attempt == 4: data.append(pd.DataFrame())
+        else: data.append(pd.DataFrame())
+    return tuple(data)
 
 def safe_float(val):
     try: return float(val)
@@ -102,7 +66,6 @@ def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_c
     if not sheet_inventory: return
     try:
         time.sleep(1)
-        # 통합 창고: 공장 구분 없이 코드만으로 찾기
         cells = sheet_inventory.findall(str(code))
         target = None
         if cells:
@@ -174,9 +137,7 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
-# 🔥 [핵심] 데이터 로딩 호출 (여기서 5번 재시도 함)
 df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
-
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
 # --- 사이드바 ---
@@ -212,8 +173,7 @@ if menu == "대시보드":
                 daily_prod = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜').tail(7)
                 chart = alt.Chart(daily_prod).mark_bar().encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("데이터를 불러오는 중입니다... (잠시 후 새로고침 해주세요)")
+    else: st.info("데이터를 불러오는 중입니다... (잠시 후 새로고침 해주세요)")
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
@@ -232,6 +192,7 @@ elif menu == "재고/생산 관리":
 
         if not df_items.empty:
             df_f = df_items.copy()
+            # 데이터 문자열 변환 및 공백 제거
             for c in ['규격', '타입', '색상', '품목명', '구분', 'Group']:
                 if c in df_f.columns: df_f[c] = df_f[c].astype(str).str.strip()
 
@@ -249,12 +210,13 @@ elif menu == "재고/생산 관리":
             df_f['Group'] = df_f.apply(get_group, axis=1)
             
             if not df_f.empty:
+                # 1. 그룹 선택
                 grp_list = sorted(list(set(df_f['Group'])))
                 grp = st.selectbox("1.그룹", grp_list)
-                
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
                 
+                # 그룹별 선택 로직
                 if grp == "반제품":
                     p_list = sorted(list(set(df_step1['품목명'])))
                     p_name = st.selectbox("2.품목명", p_list)
@@ -264,21 +226,29 @@ elif menu == "재고/생산 관리":
                     clr = st.selectbox("2.색상", c_list)
                     final = df_step1[df_step1['색상']==clr]
                 elif cat == "입고":
+                    # 원자재는 보통 규격 -> 품목명 또는 규격만 보는 경우가 많음
                     s_list = sorted(list(set(df_step1['규격'])))
                     spc = st.selectbox("2.규격", s_list) if len(s_list)>0 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    t_list = sorted(list(set(df_step1['타입'])))
-                    typ = st.selectbox("2.타입", t_list)
-                    df_step2 = df_step1[df_step1['타입']==typ]
+                    # 🔥 [요청사항 반영] KA/KG 제품: 규격 -> 색상 -> 타입 순서
+                    
+                    # 2. 규격 (Spec)
+                    s_list = sorted(list(set(df_step1['규격'])))
+                    spc = st.selectbox("2.규격", s_list)
+                    df_step2 = df_step1[df_step1['규격']==spc]
+                    
                     if not df_step2.empty:
+                        # 3. 색상 (Color)
                         c_list = sorted(list(set(df_step2['색상'])))
                         clr = st.selectbox("3.색상", c_list)
                         df_step3 = df_step2[df_step2['색상']==clr]
+                        
                         if not df_step3.empty:
-                            s_list = sorted(list(set(df_step3['규격'])))
-                            spc = st.selectbox("4.규격", s_list)
-                            final = df_step3[df_step3['규격']==spc]
+                            # 4. 타입 (Type) - 원통/큐빅 등
+                            t_list = sorted(list(set(df_step3['타입'])))
+                            typ = st.selectbox("4.타입", t_list)
+                            final = df_step3[df_step3['타입']==typ]
                 
                 if not final.empty:
                     item_info = final.iloc[0]; sel_code = item_info['코드']
@@ -349,7 +319,7 @@ elif menu == "재고/생산 관리":
             if len(df_prod_log.columns) >= 13:
                 cols = list(df_prod_log.columns); cols[12] = '라인'; df_prod_log.columns = cols
             else: df_prod_log['라인'] = "-"
-            for col in ['코드', '품목명', '라인']:
+            for col in ['코드', '품목명', '라인', '타입']:
                 if col in df_prod_log.columns: df_prod_log[col] = df_prod_log[col].astype(str)
 
             with st.expander("🔎 검색 옵션 (클릭해서 열기)", expanded=True):
@@ -372,7 +342,8 @@ elif menu == "재고/생산 관리":
             if sch_fac != "전체": df_res = df_res[df_res['공장'] == sch_fac]
 
             st.write(f"📋 검색 결과: {len(df_res)}건")
-            disp_cols = ['날짜', '시간', '공장', '라인', '코드', '품목명', '수량', '비고']
+            # 🔥 [요청 반영] '타입' 컬럼 추가하여 원통/큐빅 구분 표시
+            disp_cols = ['날짜', '시간', '공장', '라인', '코드', '품목명', '타입', '수량', '비고']
             final_cols = [c for c in disp_cols if c in df_res.columns]
             st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True)
             total_prod = df_res['수량'].sum() if not df_res.empty else 0
@@ -409,11 +380,12 @@ elif menu == "재고/생산 관리":
                         st.error(f"수정 실패: {e}")
 
             if not df_res.empty:
-                html_table = f"""<h2 style='text-align:center;'>생산 실적 기록서</h2><p style='text-align:center;'>기간: {sch_date[0]} ~ {sch_date[1] if len(sch_date)>1 else sch_date[0]} | 라인: {sch_line}</p><table style='width:100%; border-collapse: collapse; font-size: 12px; text-align: center;' border='1'><thead><tr style='background-color: #f2f2f2;'><th>날짜</th><th>시간</th><th>공장</th><th>라인</th><th>코드</th><th>품목명</th><th>수량(KG)</th><th>비고</th></tr></thead><tbody>"""
+                html_table = f"""<h2 style='text-align:center;'>생산 실적 기록서</h2><p style='text-align:center;'>기간: {sch_date[0]} ~ {sch_date[1] if len(sch_date)>1 else sch_date[0]} | 라인: {sch_line}</p><table style='width:100%; border-collapse: collapse; font-size: 12px; text-align: center;' border='1'><thead><tr style='background-color: #f2f2f2;'><th>날짜</th><th>시간</th><th>공장</th><th>라인</th><th>코드</th><th>품목명</th><th>타입</th><th>수량(KG)</th><th>비고</th></tr></thead><tbody>"""
                 for _, row in df_res.sort_values(['날짜', '시간']).iterrows():
                     line_val = row.get('라인', '-')
-                    html_table += f"<tr><td>{row['날짜']}</td><td>{row['시간']}</td><td>{row['공장']}</td><td>{line_val}</td><td>{row['코드']}</td><td>{row['품목명']}</td><td style='text-align:right;'>{row['수량']:,.0f}</td><td>{row['비고']}</td></tr>"
-                html_table += f"""</tbody><tfoot><tr style='font-weight:bold; background-color: #f2f2f2;'><td colspan='6'>합계</td><td style='text-align:right;'>{total_prod:,.0f}</td><td></td></tr></tfoot></table>"""
+                    type_val = row.get('타입', '-')
+                    html_table += f"<tr><td>{row['날짜']}</td><td>{row['시간']}</td><td>{row['공장']}</td><td>{line_val}</td><td>{row['코드']}</td><td>{row['품목명']}</td><td>{type_val}</td><td style='text-align:right;'>{row['수량']:,.0f}</td><td>{row['비고']}</td></tr>"
+                html_table += f"""</tbody><tfoot><tr style='font-weight:bold; background-color: #f2f2f2;'><td colspan='7'>합계</td><td style='text-align:right;'>{total_prod:,.0f}</td><td></td></tr></tfoot></table>"""
                 st.components.v1.html(create_print_button(html_table, "Production Report"), height=50)
 
     with t3: st.dataframe(df_logs, use_container_width=True)
