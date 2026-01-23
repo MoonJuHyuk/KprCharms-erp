@@ -61,7 +61,7 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# --- 3. 재고 업데이트 ---
+# --- 3. 재고 업데이트 (통합 창고) ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
@@ -191,11 +191,8 @@ elif menu == "재고/생산 관리":
 
         if not df_items.empty:
             df_f = df_items.copy()
-            
-            # 🔥 [강력한 데이터 정제] 모든 문자열 컬럼의 앞뒤 공백 제거 및 문자열 변환
             for c in ['규격', '타입', '색상', '품목명', '구분', 'Group']:
-                if c in df_f.columns:
-                    df_f[c] = df_f[c].astype(str).str.strip()
+                if c in df_f.columns: df_f[c] = df_f[c].astype(str).str.strip()
 
             if cat=="입고": df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
@@ -211,7 +208,6 @@ elif menu == "재고/생산 관리":
             df_f['Group'] = df_f.apply(get_group, axis=1)
             
             if not df_f.empty:
-                # Group도 strip 했으므로 깔끔해짐
                 grp_list = sorted(list(set(df_f['Group'])))
                 grp = st.selectbox("1.그룹", grp_list)
                 
@@ -231,17 +227,13 @@ elif menu == "재고/생산 관리":
                     spc = st.selectbox("2.규격", s_list) if len(s_list)>0 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    # 일반 제품 (KA, KG)
                     t_list = sorted(list(set(df_step1['타입'])))
                     typ = st.selectbox("2.타입", t_list)
                     df_step2 = df_step1[df_step1['타입']==typ]
-                    
                     if not df_step2.empty:
-                        # 🔥 여기서 색상 중복이 사라집니다 (strip + set)
                         c_list = sorted(list(set(df_step2['색상'])))
                         clr = st.selectbox("3.색상", c_list)
                         df_step3 = df_step2[df_step2['색상']==clr]
-                        
                         if not df_step3.empty:
                             s_list = sorted(list(set(df_step3['규격'])))
                             spc = st.selectbox("4.규격", s_list)
@@ -267,7 +259,7 @@ elif menu == "재고/생산 관리":
             
         if st.button("저장"):
             if item_info is None:
-                st.error("🚨 품목이 선택되지 않았습니다. 위에서 품목을 정확히 선택해주세요.")
+                st.error("🚨 품목이 선택되지 않았습니다.")
             elif sheet_logs:
                 try:
                     sheet_logs.append_row([date.strftime('%Y-%m-%d'), time_str, factory, cat, sel_code, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], qty_in, note_in, "-", prod_line])
@@ -344,6 +336,41 @@ elif menu == "재고/생산 관리":
             st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True)
             total_prod = df_res['수량'].sum() if not df_res.empty else 0
             st.metric("총 생산량 (검색 결과)", f"{total_prod:,.0f} KG")
+
+            # 🔥 [신규 기능] 라인 정보 간편 수정 (재고 영향 없음)
+            st.markdown("---")
+            st.subheader("🛠️ 라인 정보 간편 수정")
+            if not df_res.empty:
+                # 검색된 결과 내에서 선택
+                edit_opts = {}
+                for idx, row in df_res.sort_values(['날짜', '시간'], ascending=False).iterrows():
+                    # GSheet Row는 index + 2 (헤더 때문)
+                    real_row = idx + 2
+                    key = f"No.{real_row} | {row['날짜']} {row['품목명']} ({row['수량']}kg) - 현재: {row['라인']}"
+                    edit_opts[key] = real_row
+                
+                target_key = st.selectbox("수정할 기록 선택", list(edit_opts.keys()))
+                target_row_num = edit_opts[target_key]
+                
+                # 라인 목록 (공장별)
+                mod_lines = []
+                if "1공장" in target_key: # 텍스트에 공장 정보는 없지만, 현재 선택된 factory 변수 기준 or 전체
+                    mod_lines = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
+                else: # 2공장 또는 전체일 때 포괄적 목록
+                    mod_lines = [f"압출{i}호" for i in range(1, 7)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
+                
+                new_line_val = st.selectbox("변경할 라인 선택", mod_lines)
+                
+                if st.button("라인 수정 적용"):
+                    try:
+                        # 13번째 컬럼(M열)이 라인
+                        sheet_logs.update_cell(target_row_num, 13, new_line_val)
+                        st.success("라인 정보가 수정되었습니다!")
+                        time.sleep(1)
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"수정 실패: {e}")
 
             if not df_res.empty:
                 html_table = f"""<h2 style='text-align:center;'>생산 실적 기록서</h2><p style='text-align:center;'>기간: {sch_date[0]} ~ {sch_date[1] if len(sch_date)>1 else sch_date[0]} | 라인: {sch_line}</p><table style='width:100%; border-collapse: collapse; font-size: 12px; text-align: center;' border='1'><thead><tr style='background-color: #f2f2f2;'><th>날짜</th><th>시간</th><th>공장</th><th>라인</th><th>코드</th><th>품목명</th><th>수량(KG)</th><th>비고</th></tr></thead><tbody>"""
