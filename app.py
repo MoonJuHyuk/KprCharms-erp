@@ -171,7 +171,6 @@ if menu == "대시보드":
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         df_today = df_logs[df_logs['날짜'] == today]
         
-        # 상단 요약 카드
         k1, k2, k3 = st.columns(3)
         prod_val = df_today[df_today['구분']=='생산']['수량'].sum() if '구분' in df_today.columns else 0
         out_val = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
@@ -182,23 +181,17 @@ if menu == "대시보드":
         k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
         st.markdown("---")
         
-        # 🔥 [생산 추이 그래프 고도화]
         if '구분' in df_logs.columns:
             st.subheader("📈 최근 7일 생산 추이 분석")
-            
-            # 1. 필터 선택 (사이드바가 아닌 본문 상단에 배치)
             col_filter, col_dummy = st.columns([1, 2])
             with col_filter:
                 filter_opt = st.selectbox("조회 대상 선택", ["전체", "KA 제품", "KG 제품", "KA 반제품", "Compound 반제품"])
             
-            # 2. 데이터 준비
             df_prod = df_logs[df_logs['구분'] == '생산'].copy()
             if not df_prod.empty:
-                # 텍스트 검색을 위해 문자열로 변환
                 df_prod['품목명'] = df_prod['품목명'].astype(str)
                 df_prod['코드'] = df_prod['코드'].astype(str)
                 
-                # 3. 필터링 로직 적용
                 if filter_opt == "KA 제품":
                     df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & df_prod['구분'].isin(['제품','완제품'])]
                 elif filter_opt == "KG 제품":
@@ -208,19 +201,16 @@ if menu == "대시보드":
                 elif filter_opt == "Compound 반제품":
                     df_prod = df_prod[df_prod['품목명'].str.contains("CP", case=False) | df_prod['품목명'].str.contains("COMPOUND", case=False)]
                 
-                # 4. 날짜 및 요일 처리
                 if not df_prod.empty:
                     df_prod['날짜'] = pd.to_datetime(df_prod['날짜'])
-                    # 요일 매핑 (0:월 ~ 6:일)
                     weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
                     df_prod['요일'] = df_prod['날짜'].dt.dayofweek.map(weekday_map)
                     df_prod['표시날짜'] = df_prod['날짜'].dt.strftime('%m-%d') + " " + df_prod['요일']
                     
-                    # 5. 집계 (일별 합계)
                     daily_prod = df_prod.groupby(['날짜', '표시날짜'])['수량'].sum().reset_index().sort_values('날짜').tail(7)
                     
-                    # 6. 차트 그리기
-                    chart = alt.Chart(daily_prod).mark_bar().encode(
+                    # 🔥 [색상 변경] 진한 곤색(#003366) 적용
+                    chart = alt.Chart(daily_prod).mark_bar(color='#003366').encode(
                         x=alt.X('표시날짜', sort=None, title='날짜 (요일)'),
                         y=alt.Y('수량', title='생산량 (KG)'),
                         tooltip=['표시날짜', alt.Tooltip('수량', format=',.0f')]
