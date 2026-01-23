@@ -229,17 +229,17 @@ elif menu == "재고/생산 관리":
                     spc = st.selectbox("2.규격", s_list) if len(s_list)>0 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    t_list = sorted(list(set(df_step1['타입'])))
-                    typ = st.selectbox("2.타입", t_list)
-                    df_step2 = df_step1[df_step1['타입']==typ]
+                    s_list = sorted(list(set(df_step1['규격'])))
+                    spc = st.selectbox("2.규격", s_list)
+                    df_step2 = df_step1[df_step1['규격']==spc]
                     if not df_step2.empty:
                         c_list = sorted(list(set(df_step2['색상'])))
                         clr = st.selectbox("3.색상", c_list)
                         df_step3 = df_step2[df_step2['색상']==clr]
                         if not df_step3.empty:
-                            s_list = sorted(list(set(df_step3['규격'])))
-                            spc = st.selectbox("4.규격", s_list)
-                            final = df_step3[df_step3['규격']==spc]
+                            t_list = sorted(list(set(df_step3['타입'])))
+                            typ = st.selectbox("4.타입", t_list)
+                            final = df_step3[df_step3['타입']==typ]
                 
                 if not final.empty:
                     item_info = final.iloc[0]; sel_code = item_info['코드']
@@ -560,7 +560,6 @@ elif menu == "영업/출고 관리":
                     ex_date = dp.iloc[0]['날짜']
                     ship_date = datetime.datetime.now().strftime("%Y-%m-%d")
                     
-                    # 🔥 [인쇄용 제품명 변경 표 (Mapping)] - DB저장 X, 화면 표시용 O
                     st.markdown("#### ✏️ 출력용 제품명 변경 (선택)")
                     st.caption("아래 표에서 '고객용 제품명'을 바꾸면 라벨과 명세서에 바로 반영됩니다. (시스템 재고는 원래 이름 유지)")
                     unique_codes = sorted(dp['코드'].unique())
@@ -575,7 +574,6 @@ elif menu == "영업/출고 관리":
                         },
                         hide_index=True
                     )
-                    
                     code_map = dict(zip(edited_map['Internal'], edited_map['Customer_Print_Name']))
 
                     c1, c2 = st.columns(2)
@@ -593,10 +591,7 @@ elif menu == "영업/출고 관리":
                                 if not df_items.empty:
                                     inf = df_items[df_items['코드'].astype(str)==str(r['코드'])]
                                     if not inf.empty: clr = inf.iloc[0]['색상']
-                                
-                                # 매핑된 이름 사용
                                 display_name = code_map.get(str(r['코드']), str(r['코드']))
-                                
                                 pl_rows += "<tr>"
                                 if is_first: pl_rows += f"<td rowspan='{g_len}'>{plt_num}</td>"
                                 pl_rows += f"<td>{display_name}</td><td align='right'>{r['수량']:,.0f}</td><td align='center'>{clr}</td><td align='center'>{shp}</td><td align='center'>{lot_no}</td><td align='center'>{rem}</td></tr>"
@@ -604,8 +599,13 @@ elif menu == "영업/출고 관리":
                         
                         html_pl_raw = f"""<div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;"><h2 style="text-align:center;">PACKING LIST</h2><table style="width:100%; margin-bottom:10px;"><tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr><tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr><tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr></table><table style="width:100%; border-collapse: collapse; text-align:center;" border="1"><thead style="background-color:#eee;"><tr><th>PLT</th><th>ITEM NAME</th><th>Q'TY</th><th>COLOR</th><th>SHAPE</th><th>LOT#</th><th>REMARK</th></tr></thead><tbody>{pl_rows}</tbody><tfoot><tr style="font-weight:bold; background-color:#eee;"><td colspan="2">{tot_plt} PLTS</td><td align='right'>{tot_q:,.0f}</td><td colspan="4"></td></tr></tfoot></table></div>"""
                         
-                        # 🔥 텍스트 에디터로 수정 기회 제공
-                        final_pl_html = st.text_area("HTML 수정 (필요시)", html_pl_raw, height=300)
+                        # 🔥 Preview & Hide Code
+                        st.components.v1.html(html_pl_raw, height=400, scrolling=True)
+                        with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
+                            final_pl_html = st.text_area("HTML 수정", html_pl_raw, height=300)
+                        
+                        # 만약 텍스트 에어리어에서 수정했다면 그걸 쓰고, 아니면 원본
+                        if 'final_pl_html' not in locals(): final_pl_html = html_pl_raw
                         btn_html = create_print_button(final_pl_html, "Packing List", "landscape")
                         st.components.v1.html(btn_html, height=50)
 
@@ -615,11 +615,9 @@ elif menu == "영업/출고 관리":
                             labels_html_text = ""
                             for plt_num, group in dp.groupby('팔레트번호'):
                                 p_qty = group['수량'].sum()
-                                
-                                # 🔥 혼적 지원: 해당 팔레트의 모든 유니크 코드(매핑된 이름) 가져오기
                                 unique_products = group['코드'].astype(str).unique()
                                 display_names = [code_map.get(c, c) for c in unique_products]
-                                p_code_str = " / ".join(display_names) # 여러 개면 슬래시로 구분
+                                p_code_str = " / ".join(display_names)
                                 
                                 label_div = f"""
                                 <div class="page-break" style="border: none; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; font-family: 'Times New Roman', serif; font-weight: bold; padding: 10px; box-sizing: border-box;">
@@ -633,7 +631,11 @@ elif menu == "영업/출고 관리":
                                 """
                                 labels_html_text += label_div
                             
-                            final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
+                            st.components.v1.html(labels_html_text, height=400, scrolling=True)
+                            with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
+                                final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
+                            
+                            if 'final_lbl_html' not in locals(): final_lbl_html = labels_html_text
                             btn_lbl_t = create_print_button(final_lbl_html, "Standard Labels", "landscape")
                             st.components.v1.html(btn_lbl_t, height=50)
 
