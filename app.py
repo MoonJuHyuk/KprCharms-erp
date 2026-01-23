@@ -209,31 +209,40 @@ elif menu == "재고/생산 관리":
             df_f['Group'] = df_f.apply(get_group, axis=1)
             
             if not df_f.empty:
-                grp = st.selectbox("1.그룹", sorted(df_f['Group'].unique()))
+                # 🔥 [수정] unique() 리스트를 정렬하여 중복 제거 확실히 적용
+                grp_list = sorted(list(set(df_f['Group']))) # set으로 중복제거 후 정렬
+                grp = st.selectbox("1.그룹", grp_list)
+                
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
                 
-                # 🔥 [수정] 모든 선택 단계에서 문자열(str)로 강제 변환하여 비교
                 if grp == "반제품":
-                    p_name = st.selectbox("2.품목명", sorted(df_step1['품목명'].unique()))
+                    p_list = sorted(list(set(df_step1['품목명'])))
+                    p_name = st.selectbox("2.품목명", p_list)
                     final = df_step1[df_step1['품목명']==p_name]
                 elif grp == "COMPOUND":
-                    clr = st.selectbox("2.색상", sorted(df_step1['색상'].unique()))
+                    c_list = sorted(list(set(df_step1['색상'])))
+                    clr = st.selectbox("2.색상", c_list)
                     final = df_step1[df_step1['색상']==clr]
                 elif cat == "입고":
-                    spc = st.selectbox("2.규격", sorted(df_step1['규격'].unique())) if len(df_step1['규격'].unique())>1 else None
+                    s_list = sorted(list(set(df_step1['규격'])))
+                    spc = st.selectbox("2.규격", s_list) if len(s_list)>0 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
                     # 일반 제품 (KA, KG)
-                    typ = st.selectbox("2.타입", sorted(df_step1['타입'].unique()))
+                    t_list = sorted(list(set(df_step1['타입'])))
+                    typ = st.selectbox("2.타입", t_list)
                     df_step2 = df_step1[df_step1['타입']==typ]
                     
                     if not df_step2.empty:
-                        clr = st.selectbox("3.색상", sorted(df_step2['색상'].unique()))
+                        # 🔥 여기가 문제였던 부분! set()으로 확실히 중복 제거
+                        c_list = sorted(list(set(df_step2['색상'])))
+                        clr = st.selectbox("3.색상", c_list)
                         df_step3 = df_step2[df_step2['색상']==clr]
                         
                         if not df_step3.empty:
-                            spc = st.selectbox("4.규격", sorted(df_step3['규격'].unique()))
+                            s_list = sorted(list(set(df_step3['규격'])))
+                            spc = st.selectbox("4.규격", s_list)
                             final = df_step3[df_step3['규격']==spc]
                 
                 if not final.empty:
@@ -245,7 +254,7 @@ elif menu == "재고/생산 관리":
                         st.info(f"전산 재고(통합): {sys_q}")
                 else:
                     st.warning("⚠️ 선택 가능한 품목이 없습니다.")
-                    item_info = None # 선택 실패 시 명시적 None
+                    item_info = None
         
         qty_in = st.number_input("수량") if cat != "재고실사" else 0.0
         note_in = st.text_input("비고")
@@ -264,7 +273,6 @@ elif menu == "재고/생산 관리":
                     update_inventory(factory, sel_code, chg, item_info['품목명'], item_info['규격'], item_info['타입'], item_info['색상'], item_info.get('단위','-'))
                     
                     if cat=="생산" and not df_bom.empty:
-                        # BOM 중복 방지 (타입까지 확인)
                         selected_type = item_info['타입']
                         if '타입' in df_bom.columns:
                             bom_targets = df_bom[(df_bom['제품코드'].astype(str) == str(sel_code)) & (df_bom['타입'].astype(str) == str(selected_type))].drop_duplicates(subset=['자재코드'])
