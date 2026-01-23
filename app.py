@@ -13,7 +13,10 @@ import numpy as np
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    
+    # 파트너님의 구글 시트 ID
     spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
+    
     try:
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
@@ -21,6 +24,7 @@ def get_connection():
             client = gspread.authorize(creds)
             return client.open_by_key(spreadsheet_id)
     except Exception: pass
+
     key_file = 'key.json'
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
@@ -30,6 +34,7 @@ def get_connection():
 
 doc = get_connection()
 
+# 안전하게 시트 가져오기
 def get_sheet(doc, name):
     try: return doc.worksheet(name)
     except: return None
@@ -40,7 +45,7 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 ---
+# --- 2. 데이터 로딩 (데이터 정화 및 연결 보호) ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
@@ -50,6 +55,7 @@ def load_data():
             for attempt in range(5):
                 try:
                     df = pd.DataFrame(s.get_all_records())
+                    # 데이터 정화: NaN, Inf 등을 빈 문자열로 변환하여 오류 방지
                     df = df.replace([np.inf, -np.inf], np.nan).fillna("")
                     if '수량' in df.columns:
                         df['수량'] = pd.to_numeric(df['수량'], errors='coerce').fillna(0.0)
@@ -65,7 +71,7 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# --- 3. 재고 업데이트 ---
+# --- 3. 재고 업데이트 (통합 창고) ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
@@ -74,7 +80,9 @@ def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_c
         target = None
         if cells:
             for c in cells:
-                if c.col == 2: target = c; break
+                if c.col == 2: # B열(코드)인지 확인
+                    target = c; break
+        
         if target:
             curr = safe_float(sheet_inventory.cell(target.row, 7).value)
             sheet_inventory.update_cell(target.row, 7, curr + qty)
@@ -121,7 +129,7 @@ def add_apple_touch_icon(image_path):
             st.markdown(f"""<head><link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}"><link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}"></head>""", unsafe_allow_html=True)
     except: pass
 
-# --- 5. 메인 앱 ---
+# --- 5. 앱 설정 & 로그인 ---
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
     add_apple_touch_icon("logo.png")
@@ -175,7 +183,7 @@ if menu == "대시보드":
                 daily_prod = df_prod.groupby('날짜')['수량'].sum().reset_index().sort_values('날짜').tail(7)
                 chart = alt.Chart(daily_prod).mark_bar().encode(x='날짜', y='수량', tooltip=['날짜', '수량']).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
-    else: st.info("데이터를 불러오는 중입니다...")
+    else: st.info("데이터를 불러오는 중입니다... (잠시 후 새로고침 해주세요)")
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
@@ -229,17 +237,18 @@ elif menu == "재고/생산 관리":
                     spc = st.selectbox("2.규격", s_list) if len(s_list)>0 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    t_list = sorted(list(set(df_step1['타입'])))
-                    typ = st.selectbox("2.타입", t_list)
-                    df_step2 = df_step1[df_step1['타입']==typ]
+                    # 규격 -> 색상 -> 타입 (계단식)
+                    s_list = sorted(list(set(df_step1['규격'])))
+                    spc = st.selectbox("2.규격", s_list)
+                    df_step2 = df_step1[df_step1['규격']==spc]
                     if not df_step2.empty:
                         c_list = sorted(list(set(df_step2['색상'])))
                         clr = st.selectbox("3.색상", c_list)
                         df_step3 = df_step2[df_step2['색상']==clr]
                         if not df_step3.empty:
-                            s_list = sorted(list(set(df_step3['규격'])))
-                            spc = st.selectbox("4.규격", s_list)
-                            final = df_step3[df_step3['규격']==spc]
+                            t_list = sorted(list(set(df_step3['타입'])))
+                            typ = st.selectbox("4.타입", t_list)
+                            final = df_step3[df_step3['타입']==typ]
                 
                 if not final.empty:
                     item_info = final.iloc[0]; sel_code = item_info['코드']
@@ -556,13 +565,13 @@ elif menu == "영업/출고 관리":
                 dp = pend[pend['주문번호']==tgt_p].copy()
                 
                 if not dp.empty:
-                    # [1] 기본 정보
                     cli = dp.iloc[0]['거래처']
                     ex_date = dp.iloc[0]['날짜']
                     ship_date = datetime.datetime.now().strftime("%Y-%m-%d")
                     
-                    # [2] 🔥 [신규] 출력용 제품명 변경 (Mapping Editor)
+                    # 🔥 [인쇄용 제품명 변경 표 (Mapping)] - DB저장 X, 화면 표시용 O
                     st.markdown("#### ✏️ 출력용 제품명 변경 (선택)")
+                    st.caption("아래 표에서 '고객용 제품명'을 바꾸면 라벨과 명세서에 바로 반영됩니다. (시스템 재고는 원래 이름 유지)")
                     unique_codes = sorted(dp['코드'].unique())
                     map_data = [{"Internal": c, "Customer_Print_Name": c} for c in unique_codes]
                     
@@ -576,7 +585,6 @@ elif menu == "영업/출고 관리":
                         hide_index=True
                     )
                     
-                    # 매핑 사전 생성
                     code_map = dict(zip(edited_map['Internal'], edited_map['Customer_Print_Name']))
 
                     c1, c2 = st.columns(2)
@@ -584,7 +592,6 @@ elif menu == "영업/출고 관리":
                         st.markdown("### 📄 Packing List (편집 가능)")
                         pl_rows = ""; tot_q = 0; tot_plt = dp['팔레트번호'].nunique()
                         
-                        # 데이터 생성
                         for plt_num, group in dp.groupby('팔레트번호'):
                             g_len = len(group); is_first = True
                             for _, r in group.iterrows():
@@ -606,20 +613,19 @@ elif menu == "영업/출고 관리":
                         
                         html_pl_raw = f"""<div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;"><h2 style="text-align:center;">PACKING LIST</h2><table style="width:100%; margin-bottom:10px;"><tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr><tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr><tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr></table><table style="width:100%; border-collapse: collapse; text-align:center;" border="1"><thead style="background-color:#eee;"><tr><th>PLT</th><th>ITEM NAME</th><th>Q'TY</th><th>COLOR</th><th>SHAPE</th><th>LOT#</th><th>REMARK</th></tr></thead><tbody>{pl_rows}</tbody><tfoot><tr style="font-weight:bold; background-color:#eee;"><td colspan="2">{tot_plt} PLTS</td><td align='right'>{tot_q:,.0f}</td><td colspan="4"></td></tr></tfoot></table></div>"""
                         
-                        # 🔥 편집 가능한 텍스트 영역 제공
+                        # 🔥 텍스트 에디터로 수정 기회 제공
                         final_pl_html = st.text_area("HTML 수정 (필요시)", html_pl_raw, height=300)
-                        
                         btn_html = create_print_button(final_pl_html, "Packing List", "landscape")
                         st.components.v1.html(btn_html, height=50)
 
                     with c2:
                         st.markdown("### 🏷️ 라벨 (편집 가능)")
-                        with st.expander("📄 표준 텍스트 라벨 (신규)", expanded=True):
+                        with st.expander("📄 표준 텍스트 라벨 (혼적 지원)", expanded=True):
                             labels_html_text = ""
                             for plt_num, group in dp.groupby('팔레트번호'):
                                 p_qty = group['수량'].sum()
                                 
-                                # 🔥 [수정] 혼적 지원: 해당 팔레트의 모든 유니크 코드 가져오기 (매핑된 이름으로)
+                                # 🔥 혼적 지원: 해당 팔레트의 모든 유니크 코드(매핑된 이름) 가져오기
                                 unique_products = group['코드'].astype(str).unique()
                                 display_names = [code_map.get(c, c) for c in unique_products]
                                 p_code_str = " / ".join(display_names) # 여러 개면 슬래시로 구분
@@ -636,9 +642,7 @@ elif menu == "영업/출고 관리":
                                 """
                                 labels_html_text += label_div
                             
-                            # 🔥 편집 가능한 텍스트 영역 제공
                             final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
-                            
                             btn_lbl_t = create_print_button(final_lbl_html, "Standard Labels", "landscape")
                             st.components.v1.html(btn_lbl_t, height=50)
 
