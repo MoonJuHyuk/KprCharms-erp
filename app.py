@@ -7,6 +7,7 @@ import os
 import time
 import altair as alt
 import base64
+import numpy as np # NaN 처리를 위해 추가
 
 # --- 1. 구글 시트 연결 ---
 @st.cache_resource
@@ -47,7 +48,7 @@ def load_data():
     sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
     for s in sheets:
         if s:
-            for attempt in range(5): # 재시도 5회로 강화
+            for attempt in range(5):
                 try:
                     data.append(pd.DataFrame(s.get_all_records()))
                     break
@@ -192,7 +193,6 @@ elif menu == "재고/생산 관리":
 
         if not df_items.empty:
             df_f = df_items.copy()
-            # 데이터 문자열 변환 및 공백 제거
             for c in ['규격', '타입', '색상', '품목명', '구분', 'Group']:
                 if c in df_f.columns: df_f[c] = df_f[c].astype(str).str.strip()
 
@@ -210,13 +210,12 @@ elif menu == "재고/생산 관리":
             df_f['Group'] = df_f.apply(get_group, axis=1)
             
             if not df_f.empty:
-                # 1. 그룹 선택
                 grp_list = sorted(list(set(df_f['Group'])))
                 grp = st.selectbox("1.그룹", grp_list)
+                
                 df_step1 = df_f[df_f['Group']==grp]
                 final = pd.DataFrame()
                 
-                # 그룹별 선택 로직
                 if grp == "반제품":
                     p_list = sorted(list(set(df_step1['품목명'])))
                     p_name = st.selectbox("2.품목명", p_list)
@@ -226,29 +225,21 @@ elif menu == "재고/생산 관리":
                     clr = st.selectbox("2.색상", c_list)
                     final = df_step1[df_step1['색상']==clr]
                 elif cat == "입고":
-                    # 원자재는 보통 규격 -> 품목명 또는 규격만 보는 경우가 많음
                     s_list = sorted(list(set(df_step1['규격'])))
                     spc = st.selectbox("2.규격", s_list) if len(s_list)>0 else None
                     final = df_step1[df_step1['규격']==spc] if spc else df_step1
                 else:
-                    # 🔥 [요청사항 반영] KA/KG 제품: 규격 -> 색상 -> 타입 순서
-                    
-                    # 2. 규격 (Spec)
-                    s_list = sorted(list(set(df_step1['규격'])))
-                    spc = st.selectbox("2.규격", s_list)
-                    df_step2 = df_step1[df_step1['규격']==spc]
-                    
+                    t_list = sorted(list(set(df_step1['타입'])))
+                    typ = st.selectbox("2.타입", t_list)
+                    df_step2 = df_step1[df_step1['타입']==typ]
                     if not df_step2.empty:
-                        # 3. 색상 (Color)
                         c_list = sorted(list(set(df_step2['색상'])))
                         clr = st.selectbox("3.색상", c_list)
                         df_step3 = df_step2[df_step2['색상']==clr]
-                        
                         if not df_step3.empty:
-                            # 4. 타입 (Type) - 원통/큐빅 등
-                            t_list = sorted(list(set(df_step3['타입'])))
-                            typ = st.selectbox("4.타입", t_list)
-                            final = df_step3[df_step3['타입']==typ]
+                            s_list = sorted(list(set(df_step3['규격'])))
+                            spc = st.selectbox("4.규격", s_list)
+                            final = df_step3[df_step3['규격']==spc]
                 
                 if not final.empty:
                     item_info = final.iloc[0]; sel_code = item_info['코드']
@@ -342,7 +333,7 @@ elif menu == "재고/생산 관리":
             if sch_fac != "전체": df_res = df_res[df_res['공장'] == sch_fac]
 
             st.write(f"📋 검색 결과: {len(df_res)}건")
-            # 🔥 [요청 반영] '타입' 컬럼 추가하여 원통/큐빅 구분 표시
+            # 🔥 '타입' 표시
             disp_cols = ['날짜', '시간', '공장', '라인', '코드', '품목명', '타입', '수량', '비고']
             final_cols = [c for c in disp_cols if c in df_res.columns]
             st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True)
@@ -517,9 +508,16 @@ elif menu == "영업/출고 관리":
                                 remaining_data = [r for r in all_records if str(r['주문번호']) != str(tgt)]
                                 base_info = original_df.iloc[0]
                                 new_rows = []
+                                # 🔥 [수정] 빈 행 또는 NaN 안전 처리
                                 for _, row in edited_df.iterrows():
+                                    if pd.isna(row['코드']) or row['코드'] == "" or row['코드'] == "None": continue
+                                    qty_val = 0.0
+                                    try: qty_val = float(row['수량'])
+                                    except: qty_val = 0.0
+                                    if pd.isna(qty_val): qty_val = 0.0
+                                    
                                     new_rows.append({
-                                        '주문번호': tgt, '날짜': base_info['날짜'], '거래처': base_info['거래처'], '코드': row['코드'], '품목명': row['품목명'], '수량': row['수량'], '팔레트번호': row['팔레트번호'], '상태': '준비', '비고': row['비고'], 'LOT번호': row.get('LOT번호', '')
+                                        '주문번호': tgt, '날짜': base_info['날짜'], '거래처': base_info['거래처'], '코드': row['코드'], '품목명': row['품목명'], '수량': qty_val, '팔레트번호': row['팔레트번호'], '상태': '준비', '비고': row['비고'], 'LOT번호': row.get('LOT번호', '')
                                     })
                                 final_data = remaining_data + new_rows
                                 time.sleep(1)
