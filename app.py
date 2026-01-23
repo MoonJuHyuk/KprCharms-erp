@@ -596,7 +596,47 @@ elif menu == "영업/출고 관리":
                                 pl_rows += f"<td>{display_name}</td><td align='right'>{r['수량']:,.0f}</td><td align='center'>{clr}</td><td align='center'>{shp}</td><td align='center'>{lot_no}</td><td align='center'>{rem}</td></tr>"
                                 is_first = False; tot_q += r['수량']
                         
-                        html_pl_raw = f"""<div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;"><h2 style="text-align:center;">PACKING LIST</h2><table style="width:100%; margin-bottom:10px;"><tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr><tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr><tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr></table><table style="width:100%; border-collapse: collapse; text-align:center;" border="1"><thead style="background-color:#eee;"><tr><th>PLT</th><th>ITEM NAME</th><th>Q'TY</th><th>COLOR</th><th>SHAPE</th><th>LOT#</th><th>REMARK</th></tr></thead><tbody>{pl_rows}</tbody><tfoot><tr style="font-weight:bold; background-color:#eee;"><td colspan="2">{tot_plt} PLTS</td><td align='right'>{tot_q:,.0f}</td><td colspan="4"></td></tr></tfoot></table></div>"""
+                        # 🔥 Packing List: LOT칸 넓히고(25%), SHAPE칸 줄임(10%)
+                        html_pl_raw = f"""
+                        <div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;">
+                            <h2 style="text-align:center;">PACKING LIST</h2>
+                            <table style="width:100%; margin-bottom:10px;">
+                                <tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr>
+                                <tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr>
+                                <tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr>
+                            </table>
+                            <table style="width:100%; border-collapse: collapse; text-align:center; table-layout: fixed;" border="1">
+                                <colgroup>
+                                    <col style="width: 5%;">
+                                    <col style="width: 22%;">
+                                    <col style="width: 8%;">
+                                    <col style="width: 10%;">
+                                    <col style="width: 10%;">
+                                    <col style="width: 25%;">
+                                    <col style="width: 20%;">
+                                </colgroup>
+                                <thead style="background-color:#eee;">
+                                    <tr>
+                                        <th>PLT</th>
+                                        <th>ITEM NAME</th>
+                                        <th>Q'TY</th>
+                                        <th>COLOR</th>
+                                        <th>SHAPE</th>
+                                        <th>LOT#</th>
+                                        <th>REMARK</th>
+                                    </tr>
+                                </thead>
+                                <tbody>{pl_rows}</tbody>
+                                <tfoot>
+                                    <tr style="font-weight:bold; background-color:#eee;">
+                                        <td colspan="2">{tot_plt} PLTS</td>
+                                        <td align='right'>{tot_q:,.0f}</td>
+                                        <td colspan="4"></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        """
                         
                         st.components.v1.html(html_pl_raw, height=400, scrolling=True)
                         btn_html = create_print_button(html_pl_raw, "Packing List", "landscape")
@@ -636,7 +676,6 @@ elif menu == "영업/출고 관리":
                             pallet_summary = group.groupby('코드')['수량'].sum().reset_index()
                             
                             row_count = len(pallet_summary)
-                            # 🔥 [Smart Sizing] 업체명과 동일한 60px을 기본으로 하되, 줄이 많아지면 축소
                             if row_count <= 2: font_size = "60px"
                             elif row_count <= 4: font_size = "50px"
                             else: font_size = "35px"
