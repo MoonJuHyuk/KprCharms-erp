@@ -576,11 +576,11 @@ elif menu == "영업/출고 관리":
                     )
                     code_map = dict(zip(edited_map['Internal'], edited_map['Customer_Print_Name']))
 
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.markdown("### 📄 Packing List (편집 가능)")
+                    # 🔥 [수정] 탭을 사용하여 화면 정리 및 다이아몬드 라벨 복구
+                    sub_t1, sub_t2, sub_t3 = st.tabs(["📄 명세서 (Packing List)", "🔷 다이아몬드 라벨", "📑 표준 라벨 (혼적지원)"])
+                    
+                    with sub_t1:
                         pl_rows = ""; tot_q = 0; tot_plt = dp['팔레트번호'].nunique()
-                        
                         for plt_num, group in dp.groupby('팔레트번호'):
                             g_len = len(group); is_first = True
                             for _, r in group.iterrows():
@@ -599,45 +599,78 @@ elif menu == "영업/출고 관리":
                         
                         html_pl_raw = f"""<div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;"><h2 style="text-align:center;">PACKING LIST</h2><table style="width:100%; margin-bottom:10px;"><tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr><tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr><tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr></table><table style="width:100%; border-collapse: collapse; text-align:center;" border="1"><thead style="background-color:#eee;"><tr><th>PLT</th><th>ITEM NAME</th><th>Q'TY</th><th>COLOR</th><th>SHAPE</th><th>LOT#</th><th>REMARK</th></tr></thead><tbody>{pl_rows}</tbody><tfoot><tr style="font-weight:bold; background-color:#eee;"><td colspan="2">{tot_plt} PLTS</td><td align='right'>{tot_q:,.0f}</td><td colspan="4"></td></tr></tfoot></table></div>"""
                         
-                        # 🔥 Preview & Hide Code
                         st.components.v1.html(html_pl_raw, height=400, scrolling=True)
                         with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
                             final_pl_html = st.text_area("HTML 수정", html_pl_raw, height=300)
                         
-                        # 만약 텍스트 에어리어에서 수정했다면 그걸 쓰고, 아니면 원본
                         if 'final_pl_html' not in locals(): final_pl_html = html_pl_raw
                         btn_html = create_print_button(final_pl_html, "Packing List", "landscape")
                         st.components.v1.html(btn_html, height=50)
 
-                    with c2:
-                        st.markdown("### 🏷️ 라벨 (편집 가능)")
-                        with st.expander("📄 표준 텍스트 라벨 (혼적 지원)", expanded=True):
-                            labels_html_text = ""
-                            for plt_num, group in dp.groupby('팔레트번호'):
-                                p_qty = group['수량'].sum()
-                                unique_products = group['코드'].astype(str).unique()
-                                display_names = [code_map.get(c, c) for c in unique_products]
-                                p_code_str = " / ".join(display_names)
-                                
-                                label_div = f"""
-                                <div class="page-break" style="border: none; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; font-family: 'Times New Roman', serif; font-weight: bold; padding: 10px; box-sizing: border-box;">
-                                    <div style="font-size: 50px; text-transform: uppercase; width:100%; margin-bottom: 40px;">{cli}</div>
-                                    <div style="width: 100%; display: flex; justify-content: center; gap: 50px; font-size: 50px; margin-bottom: 40px;">
-                                        <span>{p_code_str}</span>
-                                        <span>{p_qty:,.0f}KG</span>
-                                    </div>
-                                    <div style="font-size: 45px; width: 100%; line-height: 1.6;"><div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div><div>PLT # : {plt_num}/{tot_plt}</div><div>TOTAL : {p_qty:,.0f} KG</div></div>
+                    with sub_t2:
+                        # 🔥 다이아몬드 라벨 복구
+                        labels_html_diamond = ""
+                        for plt_num, group in dp.groupby('팔레트번호'):
+                            p_sum = group['수량'].sum()
+                            svg_content = f"""
+                            <div class="page-break">
+                                <svg viewBox="0 0 800 600" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                                    <polygon points="400,20 780,300 400,580 20,300" fill="none" stroke="#003366" stroke-width="15"/>
+                                    <foreignObject x="100" y="120" width="600" height="120">
+                                        <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Arial, sans-serif; font-size: 35px; font-weight: bold; text-align: center; word-wrap: break-word; display: flex; justify-content: center; align-items: center; height: 100%;">
+                                            {cli}
+                                        </div>
+                                    </foreignObject>
+                                    <text x="400" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="80" font-weight="900" fill="black">KPR</text>
+                                    <text x="400" y="365" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="bold">{plt_num}/{tot_plt}</text>
+                                    <text x="400" y="425" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="bold">MADE IN KOREA</text>
+                                </svg>
+                            </div>
+                            """
+                            labels_html_diamond += svg_content
+                        
+                        # 미리보기 (작게)
+                        st.caption("▼ 미리보기")
+                        preview_dia = labels_html_diamond.replace('width="100%" height="100%"', 'width="100%" height="300px"')
+                        st.components.v1.html(preview_dia, height=400, scrolling=True)
+                        btn_lbl_d = create_print_button(labels_html_diamond, "Diamond Labels", "landscape")
+                        st.components.v1.html(btn_lbl_d, height=50)
+
+                    with sub_t3:
+                        # 🔥 표준 라벨 (레이아웃 수정됨)
+                        labels_html_text = ""
+                        for plt_num, group in dp.groupby('팔레트번호'):
+                            p_qty = group['수량'].sum()
+                            unique_products = group['코드'].astype(str).unique()
+                            display_names = [code_map.get(c, c) for c in unique_products]
+                            p_code_str = " / ".join(display_names)
+                            
+                            # 글자 크기와 레이아웃 조정 (테이블 사용)
+                            label_div = f"""
+                            <div class="page-break" style="border: none; width: 100%; height: 95vh; padding: 20px; box-sizing: border-box; font-family: 'Times New Roman', serif; font-weight: bold; text-align: center;">
+                                <div style="font-size: 40px; text-transform: uppercase; margin-bottom: 30px;">{cli}</div>
+                                <table style="width: 100%; font-size: 40px; margin-bottom: 30px; border: none;">
+                                    <tr>
+                                        <td style="text-align: center; width: 60%; border: none;">{p_code_str}</td>
+                                        <td style="text-align: center; width: 40%; border: none;">{p_qty:,.0f} KG</td>
+                                    </tr>
+                                </table>
+                                <div style="font-size: 35px; line-height: 1.5;">
+                                    <div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div>
+                                    <div>PLT # : {plt_num}/{tot_plt}</div>
+                                    <div>TOTAL : {p_qty:,.0f} KG</div>
                                 </div>
-                                """
-                                labels_html_text += label_div
-                            
-                            st.components.v1.html(labels_html_text, height=400, scrolling=True)
-                            with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
-                                final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
-                            
-                            if 'final_lbl_html' not in locals(): final_lbl_html = labels_html_text
-                            btn_lbl_t = create_print_button(final_lbl_html, "Standard Labels", "landscape")
-                            st.components.v1.html(btn_lbl_t, height=50)
+                            </div>
+                            """
+                            labels_html_text += label_div
+                        
+                        st.components.v1.html(labels_html_text, height=400, scrolling=True)
+                        with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
+                            final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
+                        
+                        if 'final_lbl_html' not in locals(): final_lbl_html = labels_html_text
+                        btn_lbl_t = create_print_button(final_lbl_html, "Standard Labels", "landscape")
+                        st.components.v1.html(btn_lbl_t, height=50)
 
     with tab_out:
         st.subheader("🚚 출고 확정 및 재고 차감")
