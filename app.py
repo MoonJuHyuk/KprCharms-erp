@@ -8,7 +8,7 @@ import time
 import altair as alt
 import base64
 import numpy as np
-import io # 엑셀 변환을 위한 모듈 추가
+import io
 
 # --- 1. 구글 시트 연결 ---
 @st.cache_resource
@@ -58,8 +58,7 @@ def load_data():
                 except:
                     time.sleep(1)
         data.append(df)
-        
-    # Mapping 시트 별도 로드 (없을 경우 대비)
+    
     try:
         s_map = get_sheet(doc, 'Print_Mapping')
         if s_map:
@@ -150,7 +149,6 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
-# 🔥 데이터 로딩 (Mapping 포함)
 df_items, df_inventory, df_logs, df_bom, df_orders, df_mapping = load_data()
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
@@ -444,7 +442,8 @@ elif menu == "영업/출고 관리":
     st.title("📑 영업 주문 및 출고 관리")
     if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
     
-    tab_o, tab_p, tab_prt, tab_out = st.tabs(["📝 1. 주문 등록", "✏️ 2. 팔레트 수정/삭제", "🖨️ 3. 명세서/라벨 인쇄", "🚚 4. 출고 확정"])
+    # 🔥 [수정] 탭 구성: 5번 탭 추가 (출고 취소)
+    tab_o, tab_p, tab_prt, tab_out, tab_cancel = st.tabs(["📝 1. 주문 등록", "✏️ 2. 팔레트 수정/삭제", "🖨️ 3. 명세서/라벨 인쇄", "🚚 4. 출고 확정", "↩️ 5. 출고 취소(복구)"])
     
     with tab_o:
         c1, c2 = st.columns([1, 2])
@@ -575,7 +574,6 @@ elif menu == "영업/출고 관리":
                     st.markdown("#### ✏️ 출력용 제품명 변경 (선택)")
                     st.caption("아래 표에서 '고객용 제품명'을 바꾸고 [영구 저장]을 누르면, 다음번에도 기억합니다.")
                     
-                    # 🔥 [DB + 현재] 매핑 로직
                     unique_codes = sorted(dp['코드'].unique())
                     saved_map = {}
                     if not df_mapping.empty:
@@ -617,7 +615,6 @@ elif menu == "영업/출고 관리":
                             st.success("저장되었습니다!"); st.cache_data.clear(); time.sleep(1); st.rerun()
                         except Exception as e: st.error(f"저장 실패: {e}")
 
-                    # 🔥 엑셀 데이터 생성 준비
                     excel_data = []
                     for plt_num, group in dp.groupby('팔레트번호'):
                         for _, r in group.iterrows():
@@ -631,19 +628,15 @@ elif menu == "영업/출고 관리":
                                 'REMARK': r['비고']
                             })
                     df_excel = pd.DataFrame(excel_data)
-                    
-                    # 엑셀 버퍼 생성
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         df_excel.to_excel(writer, index=False, sheet_name='Packing List')
                     excel_data_bin = output.getvalue()
 
-                    # 탭 화면 구성
                     sub_t1, sub_t2, sub_t3 = st.tabs(["📄 명세서 (Packing List)", "🔷 다이아몬드 라벨", "📑 표준 라벨 (혼적지원)"])
                     
                     with sub_t1:
                         c_btn1, c_btn2 = st.columns([1, 1])
-                        # 🔥 엑셀 다운로드 버튼 추가
                         with c_btn1:
                             st.download_button("📥 엑셀 파일로 다운로드", data=excel_data_bin, file_name=f"PackingList_{cli}_{datetime.date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                         
@@ -837,50 +830,78 @@ elif menu == "영업/출고 관리":
                         except Exception as e: st.error(f"처리 중 오류 발생: {e}")
             else: st.info("출고 대기 중인 주문이 없습니다.")
 
-# [4] 현장 작업 (LOT 입력)
-elif menu == "🏭 현장 작업 (LOT 입력)":
-    st.title("🏭 현장 작업: LOT 번호 입력")
-    st.caption("작업자는 할당된 팔레트 구성에 맞춰 LOT번호만 입력해주세요.")
-    if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
-    if not df_orders.empty and '상태' in df_orders.columns:
-        pend = df_orders[df_orders['상태']=='준비']
-        if not pend.empty:
-            unique_ords = pend[['주문번호', '날짜', '거래처']].drop_duplicates().set_index('주문번호')
-            order_dict = unique_ords.to_dict('index')
-            def format_ord(ord_id):
-                info = order_dict.get(ord_id)
-                return f"{info['날짜']} | {info['거래처']} ({ord_id})" if info else ord_id
-            tgt = st.selectbox("작업할 주문 선택", pend['주문번호'].unique(), format_func=format_ord, key="wrk_sel")
-            original_df = pend[pend['주문번호']==tgt].copy()
-            if not df_items.empty:
-                code_to_type = df_items.set_index('코드')['타입'].to_dict()
-                original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
-            else: original_df['타입'] = "-"
-            if 'LOT번호' not in original_df.columns: original_df['LOT번호'] = ""
-            editor_cols = ['팔레트번호', '코드', '품목명', '타입', '수량', 'LOT번호', '비고']
-            edited_df = st.data_editor(original_df[editor_cols], num_rows="fixed", key="worker_editor", use_container_width=True, disabled=["팔레트번호", "코드", "품목명", "타입", "수량", "비고"])
-            if st.button("💾 LOT 정보 저장", type="primary"):
-                with st.spinner("저장 중..."):
-                    try:
-                        time.sleep(1)
-                        all_records = sheet_orders.get_all_records()
-                        remaining_data = [r for r in all_records if str(r['주문번호']) != str(tgt)]
-                        base_info = original_df.iloc[0]
-                        new_rows = []
-                        for _, row in edited_df.iterrows():
-                            new_rows.append({
-                                '주문번호': tgt, '날짜': base_info['날짜'], '거래처': base_info['거래처'], '코드': row['코드'], '품목명': row['품목명'], '수량': row['수량'], '팔레트번호': row['팔레트번호'], '상태': '준비', '비고': row['비고'], 'LOT번호': row.get('LOT번호', '')
-                            })
-                        final_data = remaining_data + new_rows
-                        time.sleep(1)
-                        headers = list(all_records[0].keys()) if all_records else ['주문번호', '날짜', '거래처', '코드', '품목명', '수량', '팔레트번호', '상태', '비고', 'LOT번호']
-                        if 'LOT번호' not in headers: headers.append('LOT번호')
-                        update_values = [headers]
-                        for r in final_data: update_values.append([r.get(h, "") for h in headers])
-                        sheet_orders.clear(); time.sleep(1); sheet_orders.update(update_values)
-                        st.cache_data.clear(); st.success("작업 저장 완료!"); time.sleep(2); st.rerun()
-                    except Exception as e: st.error(f"오류: {e}")
-        else: st.info("작업 대기 중인 주문이 없습니다.")
+    # 🔥 [신규] 출고 취소 탭 구현
+    with tab_cancel:
+        st.subheader("↩️ 출고 취소 (재고 복구)")
+        st.warning("⚠️ 이미 출고 확정된 주문을 취소하고 재고를 되돌립니다.")
+        
+        if not df_orders.empty and '상태' in df_orders.columns:
+            # 완료된 주문만 필터링
+            completed = df_orders[df_orders['상태']=='완료']
+            if not completed.empty:
+                # 주문 선택 Selectbox
+                unique_comp_ords = completed[['주문번호', '날짜', '거래처']].drop_duplicates().sort_values('날짜', ascending=False)
+                
+                # 주문 ID와 표시 문자열 매핑
+                def format_comp_ord(ord_id):
+                    row = unique_comp_ords[unique_comp_ords['주문번호'] == ord_id].iloc[0]
+                    return f"{row['날짜']} | {row['거래처']} ({ord_id})"
+
+                target_cancel_id = st.selectbox("취소할 출고 건 선택", unique_comp_ords['주문번호'].unique(), format_func=format_comp_ord)
+                
+                # 선택된 주문 상세 보여주기
+                cancel_details = completed[completed['주문번호'] == target_cancel_id]
+                st.write("▼ 취소 대상 품목 (재고가 다시 늘어납니다)")
+                st.dataframe(cancel_details[['코드', '품목명', '수량', '팔레트번호']], use_container_width=True)
+                
+                # 취소 실행 버튼
+                if st.button("🚫 출고 취소 및 재고 복구", type="primary"):
+                    with st.spinner("취소 처리 중..."):
+                        try:
+                            # 1. 재고 복구 (수량 더하기) & 로그 기록
+                            for idx, row in cancel_details.iterrows():
+                                restore_qty = safe_float(row['수량'])
+                                update_inventory(factory, row['코드'], restore_qty) # +qty
+                                
+                                # 로그 남기기
+                                sheet_logs.append_row([
+                                    date.strftime('%Y-%m-%d'), 
+                                    time_str, 
+                                    factory, 
+                                    "출고취소", 
+                                    row['코드'], 
+                                    row['품목명'], 
+                                    "-", "-", "-", 
+                                    restore_qty, # +qty for log
+                                    f"주문복구({target_cancel_id})", 
+                                    "-", "-"
+                                ])
+                                time.sleep(0.5)
+
+                            # 2. 주문 상태 변경 (완료 -> 준비)
+                            time.sleep(1)
+                            all_records = sheet_orders.get_all_records()
+                            for r in all_records:
+                                if str(r['주문번호']) == str(target_cancel_id):
+                                    r['상태'] = '준비'
+                            
+                            # 시트 업데이트
+                            headers = list(all_records[0].keys()) if all_records else ['주문번호', '날짜', '거래처', '코드', '품목명', '수량', '팔레트번호', '상태', '비고', 'LOT번호']
+                            update_values = [headers]
+                            for r in all_records: update_values.append([r.get(h, "") for h in headers])
+                            sheet_orders.clear(); time.sleep(1); sheet_orders.update(update_values)
+                            
+                            st.cache_data.clear()
+                            st.success(f"취소 완료! 주문 상태가 '준비'로 변경되었으며, 재고가 복구되었습니다.")
+                            time.sleep(3)
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"취소 중 오류 발생: {e}")
+            else:
+                st.info("취소할 수 있는 출고 완료 건이 없습니다.")
+        else:
+            st.info("데이터가 없습니다.")
 
 # [5] 이력/LOT 검색
 elif menu == "🔍 이력/LOT 검색":
@@ -916,19 +937,18 @@ elif menu == "🔍 이력/LOT 검색":
         valid_cols = [c for c in cols if c in df_search.columns]
         st.dataframe(df_search[valid_cols].sort_values('날짜', ascending=False), use_container_width=True)
         
-        # 🔥 [신규 추가] 조회 결과 인쇄 버튼 (가로 인쇄 + LOT칸 확장)
+        # 🔥 [신규 추가] 조회 결과 인쇄 버튼
         if not df_search.empty:
             html_table = f"<h2>출고 이력 조회 결과</h2><p>조회일: {datetime.date.today()}</p>"
             html_table += "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 12px; table-layout: fixed;' border='1'>"
             
-            # 🔥 LOT번호 칸 25%로 확장
             html_table += "<colgroup>"
             html_table += "<col style='width: 10%;'>" # 날짜
             html_table += "<col style='width: 15%;'>" # 거래처
             html_table += "<col style='width: 10%;'>" # 코드
             html_table += "<col style='width: 15%;'>" # 품목명
             html_table += "<col style='width: 8%;'>"  # 수량
-            html_table += "<col style='width: 25%;'>" # LOT번호 (확장)
+            html_table += "<col style='width: 25%;'>" # LOT번호
             html_table += "<col style='width: 7%;'>"  # 상태
             html_table += "<col style='width: 10%;'>" # 비고
             html_table += "</colgroup>"
@@ -945,5 +965,4 @@ elif menu == "🔍 이력/LOT 검색":
                 html_table += "</tr>"
             html_table += "</tbody></table>"
             
-            # 🔥 Landscape 모드 적용
             st.components.v1.html(create_print_button(html_table, "Shipment History Search Result", orientation="landscape"), height=50)
