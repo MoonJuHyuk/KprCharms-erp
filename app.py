@@ -61,7 +61,7 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# --- 3. 재고 업데이트 (통합 창고) ---
+# --- 3. 재고 업데이트 ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
@@ -70,7 +70,7 @@ def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_c
         target = None
         if cells:
             for c in cells:
-                if c.col == 2: # B열(코드)인지 확인
+                if c.col == 2:
                     target = c; break
         
         if target:
@@ -191,9 +191,11 @@ elif menu == "재고/생산 관리":
 
         if not df_items.empty:
             df_f = df_items.copy()
-            # 데이터 문자열 변환 (필터링 오류 방지)
-            for c in ['규격', '타입', '색상', '품목명']:
-                if c in df_f.columns: df_f[c] = df_f[c].astype(str)
+            
+            # 🔥 [강력한 데이터 정제] 모든 문자열 컬럼의 앞뒤 공백 제거 및 문자열 변환
+            for c in ['규격', '타입', '색상', '품목명', '구분', 'Group']:
+                if c in df_f.columns:
+                    df_f[c] = df_f[c].astype(str).str.strip()
 
             if cat=="입고": df_f = df_f[df_f['구분']=='원자재']
             elif cat=="생산": df_f = df_f[df_f['구분'].isin(['제품', '완제품', '반제품'])]
@@ -201,7 +203,7 @@ elif menu == "재고/생산 관리":
             def get_group(row):
                 name = str(row['품목명']).upper()
                 grp = str(row['구분'])
-                if grp == '반제품' or name.strip().endswith('반'): return "반제품"
+                if grp == '반제품' or name.endswith('반'): return "반제품"
                 if "CP" in name or "COMPOUND" in name: return "COMPOUND"
                 if "KG" in name: return "KG"
                 if "KA" in name: return "KA"
@@ -209,8 +211,8 @@ elif menu == "재고/생산 관리":
             df_f['Group'] = df_f.apply(get_group, axis=1)
             
             if not df_f.empty:
-                # 🔥 [수정] unique() 리스트를 정렬하여 중복 제거 확실히 적용
-                grp_list = sorted(list(set(df_f['Group']))) # set으로 중복제거 후 정렬
+                # Group도 strip 했으므로 깔끔해짐
+                grp_list = sorted(list(set(df_f['Group'])))
                 grp = st.selectbox("1.그룹", grp_list)
                 
                 df_step1 = df_f[df_f['Group']==grp]
@@ -235,7 +237,7 @@ elif menu == "재고/생산 관리":
                     df_step2 = df_step1[df_step1['타입']==typ]
                     
                     if not df_step2.empty:
-                        # 🔥 여기가 문제였던 부분! set()으로 확실히 중복 제거
+                        # 🔥 여기서 색상 중복이 사라집니다 (strip + set)
                         c_list = sorted(list(set(df_step2['색상'])))
                         clr = st.selectbox("3.색상", c_list)
                         df_step3 = df_step2[df_step2['색상']==clr]
