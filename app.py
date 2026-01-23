@@ -40,12 +40,16 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 ---
+# --- 2. 데이터 로딩 (Mapping 시트 추가) ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
-    sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
-    for s in sheets:
+    # Print_Mapping 시트는 없으면 로드 실패하더라도 괜찮음 (나중에 생성)
+    sheet_names = ['Items', 'Inventory', 'Logs', 'BOM', 'Orders', 'Print_Mapping']
+    
+    for name in sheet_names:
+        s = get_sheet(doc, name)
+        df = pd.DataFrame()
         if s:
             for attempt in range(5):
                 try:
@@ -53,12 +57,11 @@ def load_data():
                     df = df.replace([np.inf, -np.inf], np.nan).fillna("")
                     if '수량' in df.columns:
                         df['수량'] = pd.to_numeric(df['수량'], errors='coerce').fillna(0.0)
-                    data.append(df)
                     break
                 except:
                     time.sleep(1)
-                    if attempt == 4: data.append(pd.DataFrame())
-        else: data.append(pd.DataFrame())
+        data.append(df)
+        
     return tuple(data)
 
 def safe_float(val):
@@ -139,7 +142,8 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
-df_items, df_inventory, df_logs, df_bom, df_orders = load_data()
+# 🔥 df_mapping 추가 로드
+df_items, df_inventory, df_logs, df_bom, df_orders, df_mapping = load_data()
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
 # --- 사이드바 ---
@@ -561,12 +565,28 @@ elif menu == "영업/출고 관리":
                     ship_date = datetime.datetime.now().strftime("%Y-%m-%d")
                     
                     st.markdown("#### ✏️ 출력용 제품명 변경 (선택)")
-                    st.caption("아래 표에서 '고객용 제품명'을 바꾸면 라벨과 명세서에 바로 반영됩니다. (시스템 재고는 원래 이름 유지)")
-                    unique_codes = sorted(dp['코드'].unique())
-                    map_data = [{"Internal": c, "Customer_Print_Name": c} for c in unique_codes]
+                    st.caption("아래 표에서 '고객용 제품명'을 바꾸고 [영구 저장]을 누르면, 다음번에도 기억합니다.")
                     
+                    # Mapping 데이터 준비
+                    unique_codes = sorted(dp['코드'].unique())
+                    
+                    # 1. DB에서 기존 매핑값 가져오기 (없으면 코드 그대로)
+                    saved_map = {}
+                    if not df_mapping.empty:
+                        # str로 변환하여 매칭 정확도 향상
+                        saved_map = dict(zip(df_mapping['Code'].astype(str), df_mapping['Print_Name'].astype(str)))
+                    
+                    # 2. 현재 주문의 코드에 대해 매핑 적용
+                    current_map_data = []
+                    for c in unique_codes:
+                        c_str = str(c)
+                        # 저장된 값이 있으면 그거 쓰고, 없으면 원래 코드
+                        print_name = saved_map.get(c_str, c_str)
+                        current_map_data.append({"Internal": c_str, "Customer_Print_Name": print_name})
+                    
+                    # 3. 에디터 표시
                     edited_map = st.data_editor(
-                        pd.DataFrame(map_data),
+                        pd.DataFrame(current_map_data),
                         use_container_width=True,
                         column_config={
                             "Internal": st.column_config.TextColumn("시스템 제품명 (수정불가)", disabled=True),
@@ -574,7 +594,43 @@ elif menu == "영업/출고 관리":
                         },
                         hide_index=True
                     )
+                    
+                    # 4. 화면용 매핑 딕셔너리 업데이트
                     code_map = dict(zip(edited_map['Internal'], edited_map['Customer_Print_Name']))
+
+                    # 5. 🔥 [영구 저장 버튼]
+                    if st.button("💾 변경된 이름 영구 저장 (시스템 반영)"):
+                        try:
+                            # Print_Mapping 시트 확보 (없으면 생성)
+                            try: 
+                                ws = doc.worksheet("Print_Mapping")
+                            except: 
+                                ws = doc.add_worksheet("Print_Mapping", 1000, 2)
+                                ws.append_row(["Code", "Print_Name"])
+                            
+                            # 기존 DB 데이터 + 현재 수정된 데이터 병합 (Upsert Logic)
+                            # 기존 DB를 dict로
+                            db_map = {}
+                            if not df_mapping.empty:
+                                db_map = dict(zip(df_mapping['Code'].astype(str), df_mapping['Print_Name'].astype(str)))
+                            
+                            # 현재 화면의 수정값으로 덮어쓰기
+                            db_map.update(code_map)
+                            
+                            # 다시 리스트로 변환하여 시트에 저장
+                            rows_to_save = [["Code", "Print_Name"]] # 헤더
+                            for k, v in db_map.items():
+                                rows_to_save.append([k, v])
+                            
+                            ws.clear()
+                            ws.update(rows_to_save)
+                            
+                            st.success("저장되었습니다! 이제 이 이름으로 계속 나옵니다.")
+                            st.cache_data.clear() # 캐시 초기화하여 즉시 반영
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"저장 중 오류 발생: {e}")
 
                     sub_t1, sub_t2, sub_t3 = st.tabs(["📄 명세서 (Packing List)", "🔷 다이아몬드 라벨", "📑 표준 라벨 (혼적지원)"])
                     
@@ -596,7 +652,6 @@ elif menu == "영업/출고 관리":
                                 pl_rows += f"<td>{display_name}</td><td align='right'>{r['수량']:,.0f}</td><td align='center'>{clr}</td><td align='center'>{shp}</td><td align='center'>{lot_no}</td><td align='center'>{rem}</td></tr>"
                                 is_first = False; tot_q += r['수량']
                         
-                        # 🔥 Packing List: LOT칸 넓히고(25%), SHAPE칸 줄임(10%)
                         html_pl_raw = f"""
                         <div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;">
                             <h2 style="text-align:center;">PACKING LIST</h2>
@@ -676,7 +731,6 @@ elif menu == "영업/출고 관리":
                             pallet_summary = group.groupby('코드')['수량'].sum().reset_index()
                             
                             row_count = len(pallet_summary)
-                            # 🔥 [Smart Sizing] 업체명과 동일한 60px을 기본으로 하되, 줄이 많아지면 축소
                             if row_count <= 2: font_size = "60px"
                             elif row_count <= 4: font_size = "50px"
                             else: font_size = "35px"
@@ -852,19 +906,21 @@ elif menu == "🔍 이력/LOT 검색":
         valid_cols = [c for c in cols if c in df_search.columns]
         st.dataframe(df_search[valid_cols].sort_values('날짜', ascending=False), use_container_width=True)
         
-        # 🔥 [신규 추가] 조회 결과 인쇄 버튼
+        # 🔥 [신규 추가] 조회 결과 인쇄 버튼 (가로 인쇄 + LOT칸 확장)
         if not df_search.empty:
             html_table = f"<h2>출고 이력 조회 결과</h2><p>조회일: {datetime.date.today()}</p>"
-            html_table += "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 12px;' border='1'>"
+            html_table += "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 12px; table-layout: fixed;' border='1'>"
             
-            # 컬럼 너비 설정 (LOT번호 넓게)
+            # 🔥 LOT번호 칸 25%로 확장
             html_table += "<colgroup>"
-            for c in valid_cols:
-                if c == 'LOT번호': html_table += "<col style='width: 25%;'>"
-                elif c == '품목명': html_table += "<col style='width: 20%;'>"
-                elif c == '거래처': html_table += "<col style='width: 15%;'>"
-                elif c == '비고': html_table += "<col style='width: 15%;'>"
-                else: html_table += "<col>" 
+            html_table += "<col style='width: 10%;'>" # 날짜
+            html_table += "<col style='width: 15%;'>" # 거래처
+            html_table += "<col style='width: 10%;'>" # 코드
+            html_table += "<col style='width: 15%;'>" # 품목명
+            html_table += "<col style='width: 8%;'>"  # 수량
+            html_table += "<col style='width: 25%;'>" # LOT번호 (확장)
+            html_table += "<col style='width: 7%;'>"  # 상태
+            html_table += "<col style='width: 10%;'>" # 비고
             html_table += "</colgroup>"
 
             html_table += "<thead><tr style='background-color: #f2f2f2;'>"
@@ -879,4 +935,5 @@ elif menu == "🔍 이력/LOT 검색":
                 html_table += "</tr>"
             html_table += "</tbody></table>"
             
+            # 🔥 Landscape 모드 적용
             st.components.v1.html(create_print_button(html_table, "Shipment History Search Result", orientation="landscape"), height=50)
