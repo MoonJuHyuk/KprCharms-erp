@@ -2,4 +2,6 @@ streamlit
 gspread
 pandas
 google-auth
+
 altair
+XlsxWriter
