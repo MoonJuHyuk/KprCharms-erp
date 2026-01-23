@@ -8,6 +8,7 @@ import time
 import altair as alt
 import base64
 import numpy as np
+import io # 엑셀 변환을 위한 모듈 추가
 
 # --- 1. 구글 시트 연결 ---
 @st.cache_resource
@@ -40,16 +41,12 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 2. 데이터 로딩 (Mapping 시트 추가) ---
+# --- 2. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
-    # Print_Mapping 시트는 없으면 로드 실패하더라도 괜찮음 (나중에 생성)
-    sheet_names = ['Items', 'Inventory', 'Logs', 'BOM', 'Orders', 'Print_Mapping']
-    
-    for name in sheet_names:
-        s = get_sheet(doc, name)
-        df = pd.DataFrame()
+    sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
+    for s in sheets:
         if s:
             for attempt in range(5):
                 try:
@@ -62,6 +59,17 @@ def load_data():
                     time.sleep(1)
         data.append(df)
         
+    # Mapping 시트 별도 로드 (없을 경우 대비)
+    try:
+        s_map = get_sheet(doc, 'Print_Mapping')
+        if s_map:
+            df_map = pd.DataFrame(s_map.get_all_records())
+        else:
+            df_map = pd.DataFrame(columns=['Code', 'Print_Name'])
+    except:
+        df_map = pd.DataFrame(columns=['Code', 'Print_Name'])
+    
+    data.append(df_map)
     return tuple(data)
 
 def safe_float(val):
@@ -142,7 +150,7 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
-# 🔥 df_mapping 추가 로드
+# 🔥 데이터 로딩 (Mapping 포함)
 df_items, df_inventory, df_logs, df_bom, df_orders, df_mapping = load_data()
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
@@ -567,24 +575,18 @@ elif menu == "영업/출고 관리":
                     st.markdown("#### ✏️ 출력용 제품명 변경 (선택)")
                     st.caption("아래 표에서 '고객용 제품명'을 바꾸고 [영구 저장]을 누르면, 다음번에도 기억합니다.")
                     
-                    # Mapping 데이터 준비
+                    # 🔥 [DB + 현재] 매핑 로직
                     unique_codes = sorted(dp['코드'].unique())
-                    
-                    # 1. DB에서 기존 매핑값 가져오기 (없으면 코드 그대로)
                     saved_map = {}
                     if not df_mapping.empty:
-                        # str로 변환하여 매칭 정확도 향상
                         saved_map = dict(zip(df_mapping['Code'].astype(str), df_mapping['Print_Name'].astype(str)))
                     
-                    # 2. 현재 주문의 코드에 대해 매핑 적용
                     current_map_data = []
                     for c in unique_codes:
                         c_str = str(c)
-                        # 저장된 값이 있으면 그거 쓰고, 없으면 원래 코드
                         print_name = saved_map.get(c_str, c_str)
                         current_map_data.append({"Internal": c_str, "Customer_Print_Name": print_name})
                     
-                    # 3. 에디터 표시
                     edited_map = st.data_editor(
                         pd.DataFrame(current_map_data),
                         use_container_width=True,
@@ -594,47 +596,57 @@ elif menu == "영업/출고 관리":
                         },
                         hide_index=True
                     )
-                    
-                    # 4. 화면용 매핑 딕셔너리 업데이트
                     code_map = dict(zip(edited_map['Internal'], edited_map['Customer_Print_Name']))
 
-                    # 5. 🔥 [영구 저장 버튼]
                     if st.button("💾 변경된 이름 영구 저장 (시스템 반영)"):
                         try:
-                            # Print_Mapping 시트 확보 (없으면 생성)
-                            try: 
-                                ws = doc.worksheet("Print_Mapping")
+                            try: ws = doc.worksheet("Print_Mapping")
                             except: 
                                 ws = doc.add_worksheet("Print_Mapping", 1000, 2)
                                 ws.append_row(["Code", "Print_Name"])
                             
-                            # 기존 DB 데이터 + 현재 수정된 데이터 병합 (Upsert Logic)
-                            # 기존 DB를 dict로
                             db_map = {}
                             if not df_mapping.empty:
                                 db_map = dict(zip(df_mapping['Code'].astype(str), df_mapping['Print_Name'].astype(str)))
-                            
-                            # 현재 화면의 수정값으로 덮어쓰기
                             db_map.update(code_map)
                             
-                            # 다시 리스트로 변환하여 시트에 저장
-                            rows_to_save = [["Code", "Print_Name"]] # 헤더
-                            for k, v in db_map.items():
-                                rows_to_save.append([k, v])
+                            rows_to_save = [["Code", "Print_Name"]]
+                            for k, v in db_map.items(): rows_to_save.append([k, v])
                             
-                            ws.clear()
-                            ws.update(rows_to_save)
-                            
-                            st.success("저장되었습니다! 이제 이 이름으로 계속 나옵니다.")
-                            st.cache_data.clear() # 캐시 초기화하여 즉시 반영
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"저장 중 오류 발생: {e}")
+                            ws.clear(); ws.update(rows_to_save)
+                            st.success("저장되었습니다!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                        except Exception as e: st.error(f"저장 실패: {e}")
 
+                    # 🔥 엑셀 데이터 생성 준비
+                    excel_data = []
+                    for plt_num, group in dp.groupby('팔레트번호'):
+                        for _, r in group.iterrows():
+                            excel_data.append({
+                                'PLT': plt_num,
+                                'ITEM NAME': code_map.get(str(r['코드']), str(r['코드'])),
+                                "Q'TY": r['수량'],
+                                'COLOR': df_items[df_items['코드'].astype(str)==str(r['코드'])].iloc[0]['색상'] if not df_items.empty else "-",
+                                'SHAPE': get_shape(r['코드'], df_items),
+                                'LOT#': r.get('LOT번호', ''),
+                                'REMARK': r['비고']
+                            })
+                    df_excel = pd.DataFrame(excel_data)
+                    
+                    # 엑셀 버퍼 생성
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        df_excel.to_excel(writer, index=False, sheet_name='Packing List')
+                    excel_data_bin = output.getvalue()
+
+                    # 탭 화면 구성
                     sub_t1, sub_t2, sub_t3 = st.tabs(["📄 명세서 (Packing List)", "🔷 다이아몬드 라벨", "📑 표준 라벨 (혼적지원)"])
                     
                     with sub_t1:
+                        c_btn1, c_btn2 = st.columns([1, 1])
+                        # 🔥 엑셀 다운로드 버튼 추가
+                        with c_btn1:
+                            st.download_button("📥 엑셀 파일로 다운로드", data=excel_data_bin, file_name=f"PackingList_{cli}_{datetime.date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        
                         pl_rows = ""; tot_q = 0; tot_plt = dp['팔레트번호'].nunique()
                         for plt_num, group in dp.groupby('팔레트번호'):
                             g_len = len(group); is_first = True
@@ -692,7 +704,6 @@ elif menu == "영업/출고 관리":
                             </table>
                         </div>
                         """
-                        
                         st.components.v1.html(html_pl_raw, height=400, scrolling=True)
                         btn_html = create_print_button(html_pl_raw, "Packing List", "landscape")
                         st.components.v1.html(btn_html, height=50)
@@ -717,7 +728,6 @@ elif menu == "영업/출고 관리":
                             </div>
                             """
                             labels_html_diamond += svg_content
-                        
                         st.caption("▼ 미리보기")
                         preview_dia = labels_html_diamond.replace('width="100%" height="100%"', 'width="100%" height="300px"')
                         st.components.v1.html(preview_dia, height=400, scrolling=True)
