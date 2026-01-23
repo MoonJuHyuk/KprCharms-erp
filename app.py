@@ -637,26 +637,22 @@ elif menu == "영업/출고 관리":
                         labels_html_text = ""
                         for plt_num, group in dp.groupby('팔레트번호'):
                             p_qty = group['수량'].sum()
-                            
-                            # 🔥 [핵심 수정] 제품별 한 줄씩 표시 (수량 포함)
-                            # 1. 제품별 합계 구하기
                             pallet_summary = group.groupby('코드')['수량'].sum().reset_index()
                             
-                            # 2. 줄 수에 따른 폰트 크기 자동 조절 (Smart Sizing)
+                            # 🔥 [Smart Sizing] 글자 크기 자동 조절 (기본: 60px)
                             row_count = len(pallet_summary)
-                            if row_count <= 2: font_size = "70px"
+                            if row_count <= 2: font_size = "60px" # 업체명과 동일 크기
                             elif row_count <= 4: font_size = "50px"
                             else: font_size = "35px"
                             
-                            # 3. 제품 리스트 HTML 생성
                             product_lines_html = ""
                             for _, row in pallet_summary.iterrows():
                                 code = row['코드']
                                 qty = row['수량']
-                                disp_name = code_map.get(str(code), str(code)) # 매핑된 이름
+                                disp_name = code_map.get(str(code), str(code))
                                 product_lines_html += f"<div style='margin: 10px 0; display:flex; justify-content:center; gap:40px;'><span>{disp_name}</span><span>{qty:,.0f} KG</span></div>"
 
-                            # 4. 전체 라벨 HTML 조립 (테두리 없음, 세로 정렬)
+                            # 테두리 제거 & 글자 크기 통일 적용
                             label_div = f"""
                             <div class="page-break" style="border: none; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; text-align: center; font-family: 'Arial', sans-serif; font-weight: bold; box-sizing: border-box; padding: 20px;">
                                 <div style="font-size: 60px; text-transform: uppercase;">{cli}</div>
@@ -672,7 +668,6 @@ elif menu == "영업/출고 관리":
                             """
                             labels_html_text += label_div
                         
-                        # 미리보기
                         st.components.v1.html(labels_html_text, height=400, scrolling=True)
                         with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
                             final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
