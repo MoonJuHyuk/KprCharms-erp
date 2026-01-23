@@ -811,3 +811,21 @@ elif menu == "🔍 이력/LOT 검색":
         cols = ['날짜', '거래처', '코드', '품목명', '수량', 'LOT번호', '상태', '비고']
         valid_cols = [c for c in cols if c in df_search.columns]
         st.dataframe(df_search[valid_cols].sort_values('날짜', ascending=False), use_container_width=True)
+        
+        # 🔥 [신규 추가] 조회 결과 인쇄 버튼
+        if not df_search.empty:
+            html_table = f"<h2>출고 이력 조회 결과</h2><p>조회일: {datetime.date.today()}</p>"
+            html_table += "<table style='width:100%; border-collapse: collapse; text-align: center;' border='1'>"
+            html_table += "<thead><tr style='background-color: #f2f2f2;'>"
+            for c in valid_cols: html_table += f"<th>{c}</th>"
+            html_table += "</tr></thead><tbody>"
+            for _, row in df_search[valid_cols].iterrows():
+                html_table += "<tr>"
+                for c in valid_cols:
+                    val = row[c]
+                    if c == '수량': val = f"{val:,.0f}"
+                    html_table += f"<td>{val}</td>"
+                html_table += "</tr>"
+            html_table += "</tbody></table>"
+            
+            st.components.v1.html(create_print_button(html_table, "Shipment History Search Result"), height=50)
