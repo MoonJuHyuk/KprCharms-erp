@@ -637,7 +637,7 @@ elif menu == "영업/출고 관리":
                         st.components.v1.html(btn_lbl_d, height=50)
 
                     with sub_t3:
-                        # 🔥 표준 라벨 (레이아웃 수정됨)
+                        # 🔥 표준 라벨 (레이아웃 수정됨 - Flex Box 사용)
                         labels_html_text = ""
                         for plt_num, group in dp.groupby('팔레트번호'):
                             p_qty = group['수량'].sum()
@@ -645,20 +645,16 @@ elif menu == "영업/출고 관리":
                             display_names = [code_map.get(c, c) for c in unique_products]
                             p_code_str = " / ".join(display_names)
                             
-                            # 글자 크기와 레이아웃 조정 (테이블 사용)
+                            # 🔥 Flex Box로 세로 정렬 및 간격 확보
                             label_div = f"""
-                            <div class="page-break" style="border: none; width: 100%; height: 95vh; padding: 20px; box-sizing: border-box; font-family: 'Times New Roman', serif; font-weight: bold; text-align: center;">
-                                <div style="font-size: 40px; text-transform: uppercase; margin-bottom: 30px;">{cli}</div>
-                                <table style="width: 100%; font-size: 40px; margin-bottom: 30px; border: none;">
-                                    <tr>
-                                        <td style="text-align: center; width: 60%; border: none;">{p_code_str}</td>
-                                        <td style="text-align: center; width: 40%; border: none;">{p_qty:,.0f} KG</td>
-                                    </tr>
-                                </table>
-                                <div style="font-size: 35px; line-height: 1.5;">
+                            <div class="page-break" style="border: 2px solid black; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; text-align: center; font-family: 'Arial', sans-serif; font-weight: bold; box-sizing: border-box; padding: 20px;">
+                                <div style="font-size: 60px; text-transform: uppercase;">{cli}</div>
+                                <div style="font-size: 80px; margin: 20px 0;">{p_code_str}</div>
+                                <div style="font-size: 70px;">{p_qty:,.0f} KG</div>
+                                <div style="font-size: 50px; margin-top: 30px;">
                                     <div>&lt;PLASTIC ABRASIVE MEDIA&gt;</div>
-                                    <div>PLT # : {plt_num}/{tot_plt}</div>
-                                    <div>TOTAL : {p_qty:,.0f} KG</div>
+                                    <div style="margin-top: 20px;">PLT # : {plt_num} / {tot_plt}</div>
+                                    <div style="margin-top: 20px;">TOTAL : {p_qty:,.0f} KG</div>
                                 </div>
                             </div>
                             """
