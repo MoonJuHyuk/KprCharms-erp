@@ -599,11 +599,7 @@ elif menu == "영업/출고 관리":
                         html_pl_raw = f"""<div style="padding:20px; font-family: 'Arial', sans-serif; font-size:12px;"><h2 style="text-align:center;">PACKING LIST</h2><table style="width:100%; margin-bottom:10px;"><tr><td><b>EX-FACTORY</b></td><td>: {ex_date}</td></tr><tr><td><b>SHIP DATE</b></td><td>: {ship_date}</td></tr><tr><td><b>CUSTOMER(BUYER)</b></td><td>: {cli}</td></tr></table><table style="width:100%; border-collapse: collapse; text-align:center;" border="1"><thead style="background-color:#eee;"><tr><th>PLT</th><th>ITEM NAME</th><th>Q'TY</th><th>COLOR</th><th>SHAPE</th><th>LOT#</th><th>REMARK</th></tr></thead><tbody>{pl_rows}</tbody><tfoot><tr style="font-weight:bold; background-color:#eee;"><td colspan="2">{tot_plt} PLTS</td><td align='right'>{tot_q:,.0f}</td><td colspan="4"></td></tr></tfoot></table></div>"""
                         
                         st.components.v1.html(html_pl_raw, height=400, scrolling=True)
-                        with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
-                            final_pl_html = st.text_area("HTML 수정", html_pl_raw, height=300)
-                        
-                        if 'final_pl_html' not in locals(): final_pl_html = html_pl_raw
-                        btn_html = create_print_button(final_pl_html, "Packing List", "landscape")
+                        btn_html = create_print_button(html_pl_raw, "Packing List", "landscape")
                         st.components.v1.html(btn_html, height=50)
 
                     with sub_t2:
@@ -639,9 +635,9 @@ elif menu == "영업/출고 관리":
                             p_qty = group['수량'].sum()
                             pallet_summary = group.groupby('코드')['수량'].sum().reset_index()
                             
-                            # 🔥 [Smart Sizing] 글자 크기 자동 조절 (기본: 60px)
                             row_count = len(pallet_summary)
-                            if row_count <= 2: font_size = "60px" # 업체명과 동일 크기
+                            # 🔥 [Smart Sizing] 업체명과 동일한 60px을 기본으로 하되, 줄이 많아지면 축소
+                            if row_count <= 2: font_size = "60px"
                             elif row_count <= 4: font_size = "50px"
                             else: font_size = "35px"
                             
@@ -652,7 +648,6 @@ elif menu == "영업/출고 관리":
                                 disp_name = code_map.get(str(code), str(code))
                                 product_lines_html += f"<div style='margin: 10px 0; display:flex; justify-content:center; gap:40px;'><span>{disp_name}</span><span>{qty:,.0f} KG</span></div>"
 
-                            # 테두리 제거 & 글자 크기 통일 적용
                             label_div = f"""
                             <div class="page-break" style="border: none; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; text-align: center; font-family: 'Arial', sans-serif; font-weight: bold; box-sizing: border-box; padding: 20px;">
                                 <div style="font-size: 60px; text-transform: uppercase;">{cli}</div>
@@ -669,11 +664,7 @@ elif menu == "영업/출고 관리":
                             labels_html_text += label_div
                         
                         st.components.v1.html(labels_html_text, height=400, scrolling=True)
-                        with st.expander("🔧 고급 수정 (HTML 코드를 직접 수정하려면 클릭)", expanded=False):
-                            final_lbl_html = st.text_area("라벨 HTML 수정", labels_html_text, height=300)
-                        
-                        if 'final_lbl_html' not in locals(): final_lbl_html = labels_html_text
-                        btn_lbl_t = create_print_button(final_lbl_html, "Standard Labels", "landscape")
+                        btn_lbl_t = create_print_button(labels_html_text, "Standard Labels", "landscape")
                         st.components.v1.html(btn_lbl_t, height=50)
 
     with tab_out:
