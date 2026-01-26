@@ -176,7 +176,7 @@ if menu == "대시보드":
         out_val = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
         pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
         
-        k1.metric("오늘 총 생산", f"{prod_val:,.0f} kg")
+        k1.metric("오늘 총 생산", f"{prod:,.0f} kg")
         k2.metric("오늘 총 출고", f"{out_val:,.0f} kg")
         k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
         st.markdown("---")
@@ -184,7 +184,7 @@ if menu == "대시보드":
         if '구분' in df_logs.columns:
             st.subheader("📈 생산 추이 분석")
             
-            # 🔥 [기간 선택 기능 추가] 기본값: 오늘 기준 7일 전 ~ 오늘
+            # 기간 선택
             c_filter1, c_filter2 = st.columns([2, 1])
             with c_filter1:
                 today_date = datetime.date.today()
@@ -194,52 +194,57 @@ if menu == "대시보드":
             with c_filter2:
                 filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA 제품", "KG 제품", "KA 반제품", "Compound 반제품"])
             
-            # 데이터 준비
+            # 1. 생산 데이터 필터링
             df_prod = df_logs[df_logs['구분'] == '생산'].copy()
             
-            if not df_prod.empty and len(search_range) == 2:
-                # 1. 날짜 필터링 (선택된 기간만)
+            if len(search_range) == 2:
                 s_d, e_d = search_range
-                df_prod['날짜'] = pd.to_datetime(df_prod['날짜'])
-                df_prod = df_prod[(df_prod['날짜'].dt.date >= s_d) & (df_prod['날짜'].dt.date <= e_d)]
                 
-                # 문자열 변환
-                df_prod['품목명'] = df_prod['품목명'].astype(str)
-                df_prod['코드'] = df_prod['코드'].astype(str)
-                df_prod['구분'] = df_prod['구분'].astype(str)
+                # 🔥 [핵심] 선택한 기간의 모든 날짜 생성 (뼈대 만들기)
+                all_dates = pd.date_range(start=s_d, end=e_d)
+                df_all_dates = pd.DataFrame({'날짜': all_dates})
+                df_all_dates['날짜'] = df_all_dates['날짜'].dt.strftime('%Y-%m-%d') # 문자열로 변환하여 매칭 준비
 
-                # 2. 품목 필터링 (정교화된 로직)
-                if filter_opt == "KA 제품":
-                    # KA가 포함되고, '반'이 포함되지 않음
-                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
-                elif filter_opt == "KG 제품":
-                    # KG가 포함되고, '반'이 포함되지 않음
-                    df_prod = df_prod[df_prod['품목명'].str.contains("KG", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
-                elif filter_opt == "KA 반제품":
-                    # KA가 포함되고, '반'이 포함되거나 구분이 '반제품'
-                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & (df_prod['품목명'].str.contains("반") | (df_prod['구분'] == '반제품'))]
-                elif filter_opt == "Compound 반제품":
-                    df_prod = df_prod[df_prod['품목명'].str.contains("CP", case=False) | df_prod['품목명'].str.contains("COMPOUND", case=False)]
-                
                 if not df_prod.empty:
-                    # 요일 표시 추가
-                    weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
-                    df_prod['요일'] = df_prod['날짜'].dt.dayofweek.map(weekday_map)
-                    df_prod['표시날짜'] = df_prod['날짜'].dt.strftime('%m-%d') + " " + df_prod['요일']
+                    df_prod['날짜'] = pd.to_datetime(df_prod['날짜']).dt.strftime('%Y-%m-%d')
                     
-                    # 집계
-                    daily_prod = df_prod.groupby(['날짜', '표시날짜'])['수량'].sum().reset_index().sort_values('날짜')
+                    # 문자열 변환 및 전처리
+                    df_prod['품목명'] = df_prod['품목명'].astype(str)
+                    df_prod['코드'] = df_prod['코드'].astype(str)
+                    df_prod['구분'] = df_prod['구분'].astype(str)
+
+                    # 품목 필터링 로직
+                    if filter_opt == "KA 제품":
+                        df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
+                    elif filter_opt == "KG 제품":
+                        df_prod = df_prod[df_prod['품목명'].str.contains("KG", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
+                    elif filter_opt == "KA 반제품":
+                        df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & (df_prod['품목명'].str.contains("반") | (df_prod['구분'] == '반제품'))]
+                    elif filter_opt == "Compound 반제품":
+                        df_prod = df_prod[df_prod['품목명'].str.contains("CP", case=False) | df_prod['품목명'].str.contains("COMPOUND", case=False)]
                     
-                    # 그래프 그리기
-                    chart = alt.Chart(daily_prod).mark_bar(color='#003366').encode(
-                        x=alt.X('표시날짜', sort=None, title='날짜 (요일)'),
-                        y=alt.Y('수량', title='생산량 (KG)'),
-                        tooltip=['표시날짜', alt.Tooltip('수량', format=',.0f')]
-                    ).properties(height=350)
-                    
-                    st.altair_chart(chart, use_container_width=True)
+                    # 날짜별 집계
+                    daily_sum = df_prod.groupby('날짜')['수량'].sum().reset_index()
                 else:
-                    st.info(f"선택하신 기간({s_d}~{e_d})에 '{filter_opt}' 생산 기록이 없습니다.")
+                    daily_sum = pd.DataFrame(columns=['날짜', '수량'])
+
+                # 🔥 [병합] 모든 날짜 데이터프레임(Left) + 생산 데이터(Right) -> 빈 날짜는 0으로 채움
+                final_df = pd.merge(df_all_dates, daily_sum, on='날짜', how='left').fillna(0)
+                
+                # 요일 및 표시 형식 추가
+                final_df['날짜_dt'] = pd.to_datetime(final_df['날짜'])
+                weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
+                final_df['요일'] = final_df['날짜_dt'].dt.dayofweek.map(weekday_map)
+                final_df['표시날짜'] = final_df['날짜_dt'].dt.strftime('%m-%d') + " " + final_df['요일']
+                
+                # 차트 그리기
+                chart = alt.Chart(final_df).mark_bar(color='#003366').encode(
+                    x=alt.X('표시날짜', sort=None, title='날짜 (요일)'),
+                    y=alt.Y('수량', title='생산량 (KG)'),
+                    tooltip=['표시날짜', alt.Tooltip('수량', format=',.0f')]
+                ).properties(height=350)
+                
+                st.altair_chart(chart, use_container_width=True)
             else:
                 st.info("기간을 선택해주세요.")
     else: st.info("데이터를 불러오는 중입니다...")
