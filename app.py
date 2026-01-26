@@ -176,7 +176,7 @@ if menu == "대시보드":
         out_val = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
         pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
         
-        k1.metric("오늘 총 생산", f"{prod:,.0f} kg")
+        k1.metric("오늘 총 생산", f"{prod_val:,.0f} kg")  # 🔥 [수정완료] prod -> prod_val로 변경
         k2.metric("오늘 총 출고", f"{out_val:,.0f} kg")
         k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
         st.markdown("---")
