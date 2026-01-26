@@ -182,34 +182,55 @@ if menu == "대시보드":
         st.markdown("---")
         
         if '구분' in df_logs.columns:
-            st.subheader("📈 최근 7일 생산 추이 분석")
-            col_filter, col_dummy = st.columns([1, 2])
-            with col_filter:
-                filter_opt = st.selectbox("조회 대상 선택", ["전체", "KA 제품", "KG 제품", "KA 반제품", "Compound 반제품"])
+            st.subheader("📈 생산 추이 분석")
             
+            # 🔥 [기간 선택 기능 추가] 기본값: 오늘 기준 7일 전 ~ 오늘
+            c_filter1, c_filter2 = st.columns([2, 1])
+            with c_filter1:
+                today_date = datetime.date.today()
+                week_ago = today_date - datetime.timedelta(days=6)
+                search_range = st.date_input("조회 기간 설정", [week_ago, today_date])
+            
+            with c_filter2:
+                filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA 제품", "KG 제품", "KA 반제품", "Compound 반제품"])
+            
+            # 데이터 준비
             df_prod = df_logs[df_logs['구분'] == '생산'].copy()
-            if not df_prod.empty:
+            
+            if not df_prod.empty and len(search_range) == 2:
+                # 1. 날짜 필터링 (선택된 기간만)
+                s_d, e_d = search_range
+                df_prod['날짜'] = pd.to_datetime(df_prod['날짜'])
+                df_prod = df_prod[(df_prod['날짜'].dt.date >= s_d) & (df_prod['날짜'].dt.date <= e_d)]
+                
+                # 문자열 변환
                 df_prod['품목명'] = df_prod['품목명'].astype(str)
                 df_prod['코드'] = df_prod['코드'].astype(str)
-                
+                df_prod['구분'] = df_prod['구분'].astype(str)
+
+                # 2. 품목 필터링 (정교화된 로직)
                 if filter_opt == "KA 제품":
-                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & df_prod['구분'].isin(['제품','완제품'])]
+                    # KA가 포함되고, '반'이 포함되지 않음
+                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
                 elif filter_opt == "KG 제품":
-                    df_prod = df_prod[df_prod['품목명'].str.contains("KG", case=False) & df_prod['구분'].isin(['제품','완제품'])]
+                    # KG가 포함되고, '반'이 포함되지 않음
+                    df_prod = df_prod[df_prod['품목명'].str.contains("KG", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
                 elif filter_opt == "KA 반제품":
-                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & df_prod['품목명'].str.contains("반")]
+                    # KA가 포함되고, '반'이 포함되거나 구분이 '반제품'
+                    df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & (df_prod['품목명'].str.contains("반") | (df_prod['구분'] == '반제품'))]
                 elif filter_opt == "Compound 반제품":
                     df_prod = df_prod[df_prod['품목명'].str.contains("CP", case=False) | df_prod['품목명'].str.contains("COMPOUND", case=False)]
                 
                 if not df_prod.empty:
-                    df_prod['날짜'] = pd.to_datetime(df_prod['날짜'])
+                    # 요일 표시 추가
                     weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
                     df_prod['요일'] = df_prod['날짜'].dt.dayofweek.map(weekday_map)
                     df_prod['표시날짜'] = df_prod['날짜'].dt.strftime('%m-%d') + " " + df_prod['요일']
                     
-                    daily_prod = df_prod.groupby(['날짜', '표시날짜'])['수량'].sum().reset_index().sort_values('날짜').tail(7)
+                    # 집계
+                    daily_prod = df_prod.groupby(['날짜', '표시날짜'])['수량'].sum().reset_index().sort_values('날짜')
                     
-                    # 🔥 [색상 변경] 진한 곤색(#003366) 적용
+                    # 그래프 그리기
                     chart = alt.Chart(daily_prod).mark_bar(color='#003366').encode(
                         x=alt.X('표시날짜', sort=None, title='날짜 (요일)'),
                         y=alt.Y('수량', title='생산량 (KG)'),
@@ -218,9 +239,9 @@ if menu == "대시보드":
                     
                     st.altair_chart(chart, use_container_width=True)
                 else:
-                    st.info(f"선택하신 '{filter_opt}'에 해당하는 생산 기록이 없습니다.")
+                    st.info(f"선택하신 기간({s_d}~{e_d})에 '{filter_opt}' 생산 기록이 없습니다.")
             else:
-                st.info("생산 기록이 없습니다.")
+                st.info("기간을 선택해주세요.")
     else: st.info("데이터를 불러오는 중입니다...")
 
 # [1] 재고/생산 관리
