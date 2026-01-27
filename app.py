@@ -131,16 +131,32 @@ def add_apple_touch_icon(image_path):
             st.markdown(f"""<head><link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}"><link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}"></head>""", unsafe_allow_html=True)
     except: pass
 
-# 🔥 제품군 분류 헬퍼 함수
+# 🔥 [업그레이드] 제품군 분류 헬퍼 함수 (KA반제품 분리)
 def get_product_category(row):
     name = str(row['품목명']).upper()
     code = str(row['코드']).upper()
     gubun = str(row.get('구분', '')).strip()
     
-    if gubun == '반제품' or '반' in name: return "반제품"
-    if 'CP' in name or 'COMPOUND' in name or 'CP' in code: return "Compound"
-    if 'KA' in name or 'KA' in code: return "KA"
-    if 'KG' in name or 'KG' in code: return "KG"
+    # 1. Compound (가장 우선)
+    if 'CP' in name or 'COMPOUND' in name or 'CP' in code: 
+        return "Compound"
+    
+    # 2. KA 반제품 (KA이면서 '반'이 포함됨)
+    if ('KA' in name or 'KA' in code) and (gubun == '반제품' or name.endswith('반') or '반' in name):
+        return "KA반제품"
+    
+    # 3. KA 완제품
+    if 'KA' in name or 'KA' in code: 
+        return "KA"
+    
+    # 4. KG 완제품
+    if 'KG' in name or 'KG' in code: 
+        return "KG"
+    
+    # 5. 그 외 반제품
+    if gubun == '반제품' or name.endswith('반'):
+        return "반제품(기타)"
+        
     return "기타"
 
 # --- 5. 메인 앱 ---
@@ -190,14 +206,14 @@ if menu == "대시보드":
         prod_data = df_yesterday[df_yesterday['구분']=='생산'].copy() if '구분' in df_yesterday.columns else pd.DataFrame()
         
         total_prod = 0
-        ka_prod = 0; kg_prod = 0; ban_prod = 0; cp_prod = 0
+        ka_prod = 0; kg_prod = 0; ka_ban_prod = 0; cp_prod = 0
         
         if not prod_data.empty:
             prod_data['Category'] = prod_data.apply(get_product_category, axis=1)
             total_prod = prod_data['수량'].sum()
             ka_prod = prod_data[prod_data['Category']=='KA']['수량'].sum()
             kg_prod = prod_data[prod_data['Category']=='KG']['수량'].sum()
-            ban_prod = prod_data[prod_data['Category']=='반제품']['수량'].sum()
+            ka_ban_prod = prod_data[prod_data['Category']=='KA반제품']['수량'].sum()
             cp_prod = prod_data[prod_data['Category']=='Compound']['수량'].sum()
 
         # 어제 출고량
@@ -214,7 +230,8 @@ if menu == "대시보드":
         <div style="font-size:14px; color:gray;">
         • KA: {ka_prod:,.0f} kg<br>
         • KG: {kg_prod:,.0f} kg<br>
-        • 반제품: {ban_prod:,.0f} kg
+        • KA반제품: {ka_ban_prod:,.0f} kg<br>
+        • Compound: {cp_prod:,.0f} kg
         </div>
         """, unsafe_allow_html=True)
         
@@ -232,16 +249,18 @@ if menu == "대시보드":
                 search_range = st.date_input("조회 기간 설정", [week_ago, yesterday_date])
             
             with c_filter2:
-                filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA", "KG", "반제품", "Compound"])
+                # 🔥 필터 옵션 업데이트
+                filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA", "KG", "KA반제품", "Compound"])
             
             df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
             
             if len(search_range) == 2:
                 s_d, e_d = search_range
                 
-                # 1. 모든 날짜 + 모든 카테고리 뼈대 만들기
+                # 1. 뼈대 만들기 (모든 날짜 + 모든 카테고리)
                 all_dates = pd.date_range(start=s_d, end=e_d)
-                categories = ["KA", "KG", "반제품", "Compound", "기타"]
+                # 🔥 카테고리 리스트 업데이트
+                categories = ["KA", "KG", "KA반제품", "Compound", "기타"]
                 
                 skeleton_data = []
                 for d in all_dates:
@@ -253,6 +272,7 @@ if menu == "대시보드":
                 # 2. 실제 데이터 가공
                 if not df_prod_log.empty:
                     df_prod_log['날짜'] = pd.to_datetime(df_prod_log['날짜']).dt.strftime('%Y-%m-%d')
+                    # 🔥 여기서 새로운 카테고리 분류 함수 적용
                     df_prod_log['Category'] = df_prod_log.apply(get_product_category, axis=1)
                     
                     if filter_opt != "전체":
@@ -275,16 +295,17 @@ if menu == "대시보드":
                 final_df['요일'] = final_df['날짜_dt'].dt.dayofweek.map(weekday_map)
                 final_df['표시날짜'] = final_df['날짜_dt'].dt.strftime('%m-%d') + " " + final_df['요일']
                 
-                # 5. 🔥 [핵심 변경] 차트 그리기 (Grouped Bar Chart - 나란히 배치)
-                # 색상 매핑
-                domain = ["KA", "KG", "반제품", "Compound", "기타"]
-                range_ = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"] # 파랑, 주황, 초록, 빨강, 보라
+                # 5. 차트 그리기
+                # 🔥 색상 매핑 업데이트 (KA반제품: 하늘색, Compound: 빨강)
+                domain = ["KA", "KG", "KA반제품", "Compound", "기타"]
+                range_ = ["#1f77b4", "#ff7f0e", "#17becf", "#d62728", "#9467bd"] 
+                # KA(파랑), KG(주황), KA반제품(하늘색), Compound(빨강), 기타(보라)
 
                 chart = alt.Chart(final_df).mark_bar().encode(
-                    x=alt.X('표시날짜', title='날짜 (요일)', axis=alt.Axis(labelAngle=0)), # 날짜 라벨 가로 정렬
+                    x=alt.X('표시날짜', title='날짜 (요일)', axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('수량', title='생산량 (KG)'),
                     color=alt.Color('Category', scale=alt.Scale(domain=domain, range=range_), title='제품군'),
-                    xOffset='Category', # 🔥 이 옵션이 막대를 나란히 펼쳐줍니다.
+                    xOffset='Category',
                     tooltip=['표시날짜', 'Category', alt.Tooltip('수량', format=',.0f')]
                 ).properties(height=400)
                 
