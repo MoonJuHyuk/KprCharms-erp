@@ -131,7 +131,7 @@ def add_apple_touch_icon(image_path):
             st.markdown(f"""<head><link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}"><link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}"></head>""", unsafe_allow_html=True)
     except: pass
 
-# 🔥 제품군 분류 헬퍼 함수 (KA, KG, 반제품, Compound 등)
+# 🔥 제품군 분류 헬퍼 함수
 def get_product_category(row):
     name = str(row['품목명']).upper()
     code = str(row['코드']).upper()
@@ -180,7 +180,7 @@ with st.sidebar:
 if menu == "대시보드":
     st.title("📊 공장 현황 대시보드")
     if not df_logs.empty:
-        # 🔥 [핵심 변경] 기준일: 오늘 -> 어제
+        # 기준일: 오늘 -> 어제
         yesterday_date = datetime.date.today() - datetime.timedelta(days=1)
         yesterday_str = yesterday_date.strftime("%Y-%m-%d")
         
@@ -206,11 +206,9 @@ if menu == "대시보드":
         # 대기 주문
         pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
         
-        # 상단 메트릭 카드
         st.subheader(f"📅 어제({yesterday_str}) 실적 요약")
         k1, k2, k3 = st.columns(3)
         
-        # 생산 상세 내역 표시
         k1.metric("어제 총 생산", f"{total_prod:,.0f} kg")
         k1.markdown(f"""
         <div style="font-size:14px; color:gray;">
@@ -225,13 +223,11 @@ if menu == "대시보드":
         
         st.markdown("---")
         
-        # 🔥 [그래프] 생산 추이 (색상 구분 적용)
         if '구분' in df_logs.columns:
-            st.subheader("📈 생산 추이 분석 (제품군별)")
+            st.subheader("📈 생산 추이 분석 (제품군별 비교)")
             
             c_filter1, c_filter2 = st.columns([2, 1])
             with c_filter1:
-                # 기본 조회 기간: 어제 기준 -6일 ~ 어제
                 week_ago = yesterday_date - datetime.timedelta(days=6)
                 search_range = st.date_input("조회 기간 설정", [week_ago, yesterday_date])
             
@@ -243,7 +239,7 @@ if menu == "대시보드":
             if len(search_range) == 2:
                 s_d, e_d = search_range
                 
-                # 1. 모든 날짜 + 모든 카테고리 뼈대 만들기 (그래프 끊김 방지)
+                # 1. 모든 날짜 + 모든 카테고리 뼈대 만들기
                 all_dates = pd.date_range(start=s_d, end=e_d)
                 categories = ["KA", "KG", "반제품", "Compound", "기타"]
                 
@@ -259,22 +255,19 @@ if menu == "대시보드":
                     df_prod_log['날짜'] = pd.to_datetime(df_prod_log['날짜']).dt.strftime('%Y-%m-%d')
                     df_prod_log['Category'] = df_prod_log.apply(get_product_category, axis=1)
                     
-                    # 필터링
                     if filter_opt != "전체":
                         df_prod_log = df_prod_log[df_prod_log['Category'] == filter_opt]
                     
-                    # 날짜/카테고리별 합계
                     real_sum = df_prod_log.groupby(['날짜', 'Category'])['수량'].sum().reset_index()
                 else:
                     real_sum = pd.DataFrame(columns=['날짜', 'Category', '수량'])
                 
-                # 3. 뼈대와 병합 (Left Join) -> 없는 데이터는 0으로
-                # 먼저 Skeleton에서 필터 적용 (그래프에 불필요한 범례 안 나오게)
+                # 3. 뼈대와 병합
                 if filter_opt != "전체":
                     df_skeleton = df_skeleton[df_skeleton['Category'] == filter_opt]
                 
                 final_df = pd.merge(df_skeleton, real_sum, on=['날짜', 'Category'], how='left', suffixes=('_base', '_real'))
-                final_df['수량'] = final_df['수량_real'].fillna(0) # 실제 값이 있으면 쓰고, 없으면 0
+                final_df['수량'] = final_df['수량_real'].fillna(0)
                 
                 # 4. 요일 추가
                 final_df['날짜_dt'] = pd.to_datetime(final_df['날짜'])
@@ -282,15 +275,16 @@ if menu == "대시보드":
                 final_df['요일'] = final_df['날짜_dt'].dt.dayofweek.map(weekday_map)
                 final_df['표시날짜'] = final_df['날짜_dt'].dt.strftime('%m-%d') + " " + final_df['요일']
                 
-                # 5. 차트 그리기 (색상 구분)
+                # 5. 🔥 [핵심 변경] 차트 그리기 (Grouped Bar Chart - 나란히 배치)
                 # 색상 매핑
                 domain = ["KA", "KG", "반제품", "Compound", "기타"]
                 range_ = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"] # 파랑, 주황, 초록, 빨강, 보라
 
                 chart = alt.Chart(final_df).mark_bar().encode(
-                    x=alt.X('표시날짜', sort=None, title='날짜 (요일)'),
+                    x=alt.X('표시날짜', title='날짜 (요일)', axis=alt.Axis(labelAngle=0)), # 날짜 라벨 가로 정렬
                     y=alt.Y('수량', title='생산량 (KG)'),
                     color=alt.Color('Category', scale=alt.Scale(domain=domain, range=range_), title='제품군'),
+                    xOffset='Category', # 🔥 이 옵션이 막대를 나란히 펼쳐줍니다.
                     tooltip=['표시날짜', 'Category', alt.Tooltip('수량', format=',.0f')]
                 ).properties(height=400)
                 
