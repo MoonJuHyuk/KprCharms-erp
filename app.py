@@ -131,6 +131,18 @@ def add_apple_touch_icon(image_path):
             st.markdown(f"""<head><link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}"><link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}"></head>""", unsafe_allow_html=True)
     except: pass
 
+# 🔥 제품군 분류 헬퍼 함수 (KA, KG, 반제품, Compound 등)
+def get_product_category(row):
+    name = str(row['품목명']).upper()
+    code = str(row['코드']).upper()
+    gubun = str(row.get('구분', '')).strip()
+    
+    if gubun == '반제품' or '반' in name: return "반제품"
+    if 'CP' in name or 'COMPOUND' in name or 'CP' in code: return "Compound"
+    if 'KA' in name or 'KA' in code: return "KA"
+    if 'KG' in name or 'KG' in code: return "KG"
+    return "기타"
+
 # --- 5. 메인 앱 ---
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
@@ -168,83 +180,122 @@ with st.sidebar:
 if menu == "대시보드":
     st.title("📊 공장 현황 대시보드")
     if not df_logs.empty:
-        today = datetime.datetime.now().strftime("%Y-%m-%d")
-        df_today = df_logs[df_logs['날짜'] == today]
+        # 🔥 [핵심 변경] 기준일: 오늘 -> 어제
+        yesterday_date = datetime.date.today() - datetime.timedelta(days=1)
+        yesterday_str = yesterday_date.strftime("%Y-%m-%d")
         
-        k1, k2, k3 = st.columns(3)
-        prod_val = df_today[df_today['구분']=='생산']['수량'].sum() if '구분' in df_today.columns else 0
-        out_val = df_today[df_today['구분']=='출고']['수량'].sum() if '구분' in df_today.columns else 0
+        df_yesterday = df_logs[df_logs['날짜'] == yesterday_str]
+        
+        # 어제 생산량 집계
+        prod_data = df_yesterday[df_yesterday['구분']=='생산'].copy() if '구분' in df_yesterday.columns else pd.DataFrame()
+        
+        total_prod = 0
+        ka_prod = 0; kg_prod = 0; ban_prod = 0; cp_prod = 0
+        
+        if not prod_data.empty:
+            prod_data['Category'] = prod_data.apply(get_product_category, axis=1)
+            total_prod = prod_data['수량'].sum()
+            ka_prod = prod_data[prod_data['Category']=='KA']['수량'].sum()
+            kg_prod = prod_data[prod_data['Category']=='KG']['수량'].sum()
+            ban_prod = prod_data[prod_data['Category']=='반제품']['수량'].sum()
+            cp_prod = prod_data[prod_data['Category']=='Compound']['수량'].sum()
+
+        # 어제 출고량
+        out_val = df_yesterday[df_yesterday['구분']=='출고']['수량'].sum() if '구분' in df_yesterday.columns else 0
+        
+        # 대기 주문
         pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
         
-        k1.metric("오늘 총 생산", f"{prod_val:,.0f} kg")  # 🔥 [수정완료] prod -> prod_val로 변경
-        k2.metric("오늘 총 출고", f"{out_val:,.0f} kg")
+        # 상단 메트릭 카드
+        st.subheader(f"📅 어제({yesterday_str}) 실적 요약")
+        k1, k2, k3 = st.columns(3)
+        
+        # 생산 상세 내역 표시
+        k1.metric("어제 총 생산", f"{total_prod:,.0f} kg")
+        k1.markdown(f"""
+        <div style="font-size:14px; color:gray;">
+        • KA: {ka_prod:,.0f} kg<br>
+        • KG: {kg_prod:,.0f} kg<br>
+        • 반제품: {ban_prod:,.0f} kg
+        </div>
+        """, unsafe_allow_html=True)
+        
+        k2.metric("어제 총 출고", f"{out_val:,.0f} kg")
         k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
+        
         st.markdown("---")
         
+        # 🔥 [그래프] 생산 추이 (색상 구분 적용)
         if '구분' in df_logs.columns:
-            st.subheader("📈 생산 추이 분석")
+            st.subheader("📈 생산 추이 분석 (제품군별)")
             
-            # 기간 선택
             c_filter1, c_filter2 = st.columns([2, 1])
             with c_filter1:
-                today_date = datetime.date.today()
-                week_ago = today_date - datetime.timedelta(days=6)
-                search_range = st.date_input("조회 기간 설정", [week_ago, today_date])
+                # 기본 조회 기간: 어제 기준 -6일 ~ 어제
+                week_ago = yesterday_date - datetime.timedelta(days=6)
+                search_range = st.date_input("조회 기간 설정", [week_ago, yesterday_date])
             
             with c_filter2:
-                filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA 제품", "KG 제품", "KA 반제품", "Compound 반제품"])
+                filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA", "KG", "반제품", "Compound"])
             
-            # 1. 생산 데이터 필터링
-            df_prod = df_logs[df_logs['구분'] == '생산'].copy()
+            df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
             
             if len(search_range) == 2:
                 s_d, e_d = search_range
                 
-                # 🔥 [핵심] 선택한 기간의 모든 날짜 생성 (뼈대 만들기)
+                # 1. 모든 날짜 + 모든 카테고리 뼈대 만들기 (그래프 끊김 방지)
                 all_dates = pd.date_range(start=s_d, end=e_d)
-                df_all_dates = pd.DataFrame({'날짜': all_dates})
-                df_all_dates['날짜'] = df_all_dates['날짜'].dt.strftime('%Y-%m-%d') # 문자열로 변환하여 매칭 준비
-
-                if not df_prod.empty:
-                    df_prod['날짜'] = pd.to_datetime(df_prod['날짜']).dt.strftime('%Y-%m-%d')
-                    
-                    # 문자열 변환 및 전처리
-                    df_prod['품목명'] = df_prod['품목명'].astype(str)
-                    df_prod['코드'] = df_prod['코드'].astype(str)
-                    df_prod['구분'] = df_prod['구분'].astype(str)
-
-                    # 품목 필터링 로직
-                    if filter_opt == "KA 제품":
-                        df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
-                    elif filter_opt == "KG 제품":
-                        df_prod = df_prod[df_prod['품목명'].str.contains("KG", case=False) & ~df_prod['품목명'].str.contains("반", case=False)]
-                    elif filter_opt == "KA 반제품":
-                        df_prod = df_prod[df_prod['품목명'].str.contains("KA", case=False) & (df_prod['품목명'].str.contains("반") | (df_prod['구분'] == '반제품'))]
-                    elif filter_opt == "Compound 반제품":
-                        df_prod = df_prod[df_prod['품목명'].str.contains("CP", case=False) | df_prod['품목명'].str.contains("COMPOUND", case=False)]
-                    
-                    # 날짜별 집계
-                    daily_sum = df_prod.groupby('날짜')['수량'].sum().reset_index()
-                else:
-                    daily_sum = pd.DataFrame(columns=['날짜', '수량'])
-
-                # 🔥 [병합] 모든 날짜 데이터프레임(Left) + 생산 데이터(Right) -> 빈 날짜는 0으로 채움
-                final_df = pd.merge(df_all_dates, daily_sum, on='날짜', how='left').fillna(0)
+                categories = ["KA", "KG", "반제품", "Compound", "기타"]
                 
-                # 요일 및 표시 형식 추가
+                skeleton_data = []
+                for d in all_dates:
+                    d_str = d.strftime('%Y-%m-%d')
+                    for c in categories:
+                        skeleton_data.append({'날짜': d_str, 'Category': c, '수량': 0})
+                df_skeleton = pd.DataFrame(skeleton_data)
+
+                # 2. 실제 데이터 가공
+                if not df_prod_log.empty:
+                    df_prod_log['날짜'] = pd.to_datetime(df_prod_log['날짜']).dt.strftime('%Y-%m-%d')
+                    df_prod_log['Category'] = df_prod_log.apply(get_product_category, axis=1)
+                    
+                    # 필터링
+                    if filter_opt != "전체":
+                        df_prod_log = df_prod_log[df_prod_log['Category'] == filter_opt]
+                    
+                    # 날짜/카테고리별 합계
+                    real_sum = df_prod_log.groupby(['날짜', 'Category'])['수량'].sum().reset_index()
+                else:
+                    real_sum = pd.DataFrame(columns=['날짜', 'Category', '수량'])
+                
+                # 3. 뼈대와 병합 (Left Join) -> 없는 데이터는 0으로
+                # 먼저 Skeleton에서 필터 적용 (그래프에 불필요한 범례 안 나오게)
+                if filter_opt != "전체":
+                    df_skeleton = df_skeleton[df_skeleton['Category'] == filter_opt]
+                
+                final_df = pd.merge(df_skeleton, real_sum, on=['날짜', 'Category'], how='left', suffixes=('_base', '_real'))
+                final_df['수량'] = final_df['수량_real'].fillna(0) # 실제 값이 있으면 쓰고, 없으면 0
+                
+                # 4. 요일 추가
                 final_df['날짜_dt'] = pd.to_datetime(final_df['날짜'])
                 weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
                 final_df['요일'] = final_df['날짜_dt'].dt.dayofweek.map(weekday_map)
                 final_df['표시날짜'] = final_df['날짜_dt'].dt.strftime('%m-%d') + " " + final_df['요일']
                 
-                # 차트 그리기
-                chart = alt.Chart(final_df).mark_bar(color='#003366').encode(
+                # 5. 차트 그리기 (색상 구분)
+                # 색상 매핑
+                domain = ["KA", "KG", "반제품", "Compound", "기타"]
+                range_ = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"] # 파랑, 주황, 초록, 빨강, 보라
+
+                chart = alt.Chart(final_df).mark_bar().encode(
                     x=alt.X('표시날짜', sort=None, title='날짜 (요일)'),
                     y=alt.Y('수량', title='생산량 (KG)'),
-                    tooltip=['표시날짜', alt.Tooltip('수량', format=',.0f')]
-                ).properties(height=350)
+                    color=alt.Color('Category', scale=alt.Scale(domain=domain, range=range_), title='제품군'),
+                    tooltip=['표시날짜', 'Category', alt.Tooltip('수량', format=',.0f')]
+                ).properties(height=400)
                 
                 st.altair_chart(chart, use_container_width=True)
+                
             else:
                 st.info("기간을 선택해주세요.")
     else: st.info("데이터를 불러오는 중입니다...")
