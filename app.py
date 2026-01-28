@@ -10,11 +10,11 @@ import base64
 import numpy as np
 import io
 
-# --- 0. 아이콘 및 로고 설정 함수 (크롬/엣지 바로가기 지원) ---
+# --- 0. 아이콘 설정 함수 (강제 주입) ---
 def add_apple_touch_icon(image_path):
     """
-    logo.png 파일을 읽어서 브라우저 탭 아이콘(Favicon)과
-    크롬/엣지 '바로가기 만들기' 아이콘으로 설정합니다.
+    브라우저가 '바로가기'를 만들 때 로고를 가져가도록
+    HTML 헤더에 아이콘 정보를 강제로 주입합니다.
     """
     try:
         if os.path.exists(image_path):
@@ -22,14 +22,16 @@ def add_apple_touch_icon(image_path):
                 # 이미지를 읽어서 웹 코드로 변환 (Base64)
                 b64_icon = base64.b64encode(f.read()).decode("utf-8")
                 
-                # 머리말(Head)에 아이콘 정보를 강제로 주입
+                # HTML Head에 다양한 아이콘 규격을 모두 선언
                 st.markdown(
                     f"""
                     <head>
                         <link rel="icon" type="image/png" href="data:image/png;base64,{b64_icon}">
+                        <link rel="shortcut icon" href="data:image/png;base64,{b64_icon}">
+                        <link rel="apple-touch-icon" href="data:image/png;base64,{b64_icon}">
                         <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}">
-                        <link rel="shortcut icon" sizes="192x192" href="data:image/png;base64,{b64_icon}">
                         <link rel="icon" sizes="192x192" href="data:image/png;base64,{b64_icon}">
+                        <link rel="icon" sizes="512x512" href="data:image/png;base64,{b64_icon}">
                     </head>
                     """,
                     unsafe_allow_html=True
@@ -38,9 +40,10 @@ def add_apple_touch_icon(image_path):
         pass
 
 # --- 1. 페이지 설정 (가장 먼저 실행) ---
+# page_icon 설정이 탭 아이콘(Favicon)을 결정합니다.
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
-    add_apple_touch_icon("logo.png") # 바로가기 아이콘 적용
+    add_apple_touch_icon("logo.png") # 바로가기용 헤더 주입
 else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
@@ -75,14 +78,14 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 3. 데이터 로딩 ---
+# --- 3. 데이터 로딩 (에러 방지 적용) ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
     sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
     
     for s in sheets:
-        df = pd.DataFrame() # 초기화 (에러 방지)
+        df = pd.DataFrame() # 초기화 (UnboundLocalError 방지)
         if s:
             for attempt in range(5):
                 try:
@@ -194,7 +197,6 @@ if 'cart' not in st.session_state: st.session_state['cart'] = []
 
 # --- 7. 사이드바 ---
 with st.sidebar:
-    # 로고 이미지가 있으면 표시
     if os.path.exists("logo.png"): 
         st.image("logo.png", use_container_width=True)
     else:
@@ -277,16 +279,14 @@ if menu == "대시보드":
                 final_df['요일'] = final_df['날짜_dt'].dt.dayofweek.map(weekday_map)
                 final_df['표시날짜'] = final_df['날짜_dt'].dt.strftime('%m-%d') + " " + final_df['요일']
                 
-                # 색상 매핑
                 domain = ["KA", "KG", "KA반제품", "Compound", "기타"]
                 range_ = ["#1f77b4", "#ff7f0e", "#17becf", "#d62728", "#9467bd"] 
                 
-                # Grouped Bar Chart (나란히 배치)
                 chart = alt.Chart(final_df).mark_bar().encode(
                     x=alt.X('표시날짜', title='날짜 (요일)', axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('수량', title='생산량 (KG)'),
                     color=alt.Color('Category', scale=alt.Scale(domain=domain, range=range_), title='제품군'),
-                    xOffset='Category', # 막대 나란히 배치
+                    xOffset='Category',
                     tooltip=['표시날짜', 'Category', alt.Tooltip('수량', format=',.0f')]
                 ).properties(height=400)
                 st.altair_chart(chart, use_container_width=True)
@@ -418,13 +418,11 @@ elif menu == "재고/생산 관리":
                 else: df_v = df_v[df_v['구분']==cat_f]
             st.dataframe(df_v, use_container_width=True)
     
-    # 🔥 생산 이력 통합 관리 (삭제+복구)
     with t2:
         st.subheader("🔍 생산 이력 관리 (조회 및 잘못된 기록 삭제)")
         if df_logs.empty: st.info("로그 데이터가 없습니다.")
         else:
             df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
-            # Original_Row -> No 로 변경
             df_prod_log['No'] = df_prod_log.index + 2 
             
             if len(df_prod_log.columns) >= 13:
@@ -457,7 +455,6 @@ elif menu == "재고/생산 관리":
             with col_del1:
                 st.write(f"📋 검색 결과: {len(df_res)}건")
             
-            # hide_index=True로 헷갈리는 앞쪽 숫자 제거
             disp_cols = ['No', '날짜', '시간', '공장', '라인', '코드', '품목명', '타입', '수량', '비고']
             final_cols = [c for c in disp_cols if c in df_res.columns]
             st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
@@ -586,7 +583,6 @@ elif menu == "영업/출고 관리":
 
                 editor_cols = ['팔레트번호', '코드', '품목명', '타입', '수량', 'LOT번호', '비고']
                 
-                # key값 고유화 (튕김 방지)
                 edited_df = st.data_editor(
                     original_df[editor_cols], 
                     num_rows="dynamic", 
