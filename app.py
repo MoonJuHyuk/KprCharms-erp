@@ -47,7 +47,7 @@ def load_data():
     data = []
     sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
     for s in sheets:
-        df = pd.DataFrame() # 초기화
+        df = pd.DataFrame()
         if s:
             for attempt in range(5):
                 try:
@@ -366,7 +366,6 @@ elif menu == "재고/생산 관리":
 
     st.title(f"📦 재고/생산 관리 ({factory})")
     
-    # 🔥 [수정] 탭 구성 변경: 2번 탭에 삭제 기능 통합
     t1, t2, t3, t4 = st.tabs(["📦 재고 현황", "🏭 생산 이력 (조회/수정/삭제)", "📜 전체 로그", "🔩 BOM"])
     
     with t1:
@@ -384,14 +383,13 @@ elif menu == "재고/생산 관리":
                 else: df_v = df_v[df_v['구분']==cat_f]
             st.dataframe(df_v, use_container_width=True)
     
-    # 🔥 [핵심 업데이트] 생산 이력 조회 + 삭제 통합
     with t2:
         st.subheader("🔍 생산 이력 관리 (조회 및 잘못된 기록 삭제)")
         if df_logs.empty: st.info("로그 데이터가 없습니다.")
         else:
             df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
-            # 원본 데이터의 행 번호를 보존 (삭제 시 사용)
-            df_prod_log['Original_Row'] = df_prod_log.index + 2 # Header=1, 0-index=2
+            # 🔥 [수정] Original_Row -> No 로 이름 변경
+            df_prod_log['No'] = df_prod_log.index + 2 
             
             if len(df_prod_log.columns) >= 13:
                 cols = list(df_prod_log.columns); cols[12] = '라인'; df_prod_log.columns = cols
@@ -418,40 +416,36 @@ elif menu == "재고/생산 관리":
             if sch_code: df_res = df_res[df_res['코드'].str.contains(sch_code, case=False) | df_res['품목명'].str.contains(sch_code, case=False)]
             if sch_fac != "전체": df_res = df_res[df_res['공장'] == sch_fac]
 
-            # 삭제 UI 추가
             st.markdown("---")
             col_del1, col_del2 = st.columns([3, 1])
             with col_del1:
                 st.write(f"📋 검색 결과: {len(df_res)}건")
             
-            # 리스트 보여주기
-            disp_cols = ['Original_Row', '날짜', '시간', '공장', '라인', '코드', '품목명', '타입', '수량', '비고']
+            # 🔥 [수정] No 컬럼 사용 및 hide_index=True 적용 (헷갈리는 108 제거)
+            disp_cols = ['No', '날짜', '시간', '공장', '라인', '코드', '품목명', '타입', '수량', '비고']
             final_cols = [c for c in disp_cols if c in df_res.columns]
-            st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True)
+            st.dataframe(df_res[final_cols].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
             
             st.markdown("### 🗑️ 기록 삭제 (자동 반제품 복구)")
             
-            # 삭제 대상 선택 (최신순)
             df_for_select = df_res.sort_values(['날짜', '시간'], ascending=False)
-            delete_options = {row['Original_Row']: f"No.{row['Original_Row']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_for_select.iterrows()}
+            # 🔥 [수정] No 사용
+            delete_options = {row['No']: f"No.{row['No']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_for_select.iterrows()}
             
             sel_del_id = st.selectbox("삭제할 기록 선택", list(delete_options.keys()), format_func=lambda x: delete_options[x])
             
             if st.button("❌ 선택한 기록 삭제 및 재고 원상복구", type="primary"):
-                target_row = df_prod_log[df_prod_log['Original_Row'] == sel_del_id].iloc[0]
+                # 🔥 [수정] No 기준 검색
+                target_row = df_prod_log[df_prod_log['No'] == sel_del_id].iloc[0]
                 
-                # 1. 정보 확보
                 del_date = target_row['날짜']
                 del_time = target_row['시간']
                 del_fac = target_row['공장']
                 del_code = target_row['코드']
                 del_qty = safe_float(target_row['수량'])
                 
-                # 2. 제품 재고 복구 (생산 취소니까 재고 차감)
                 update_inventory(del_fac, del_code, -del_qty)
                 
-                # 3. BOM(반제품/원자재) 자동 복구 로직
-                # 같은 날짜, 같은 시간, 사용(Auto) 타입인 로그를 찾음
                 linked_logs = df_logs[
                     (df_logs['날짜'] == del_date) & 
                     (df_logs['시간'] == del_time) & 
@@ -459,16 +453,14 @@ elif menu == "재고/생산 관리":
                     (df_logs['비고'].str.contains(str(del_code), na=False))
                 ]
                 
-                rows_to_delete = [sel_del_id] # 제품 생산 로그
+                rows_to_delete = [sel_del_id]
                 
                 if not linked_logs.empty:
                     for idx, row in linked_logs.iterrows():
-                        # BOM은 마이너스로 기록되어 있으므로, 뺄셈하면 더해짐 (복구)
-                        mat_qty = safe_float(row['수량']) # 예: -100
-                        update_inventory(del_fac, row['코드'], -mat_qty) # -(-100) = +100 (복구)
-                        rows_to_delete.append(idx + 2) # 시트 행 번호
+                        mat_qty = safe_float(row['수량'])
+                        update_inventory(del_fac, row['코드'], -mat_qty)
+                        rows_to_delete.append(idx + 2)
                 
-                # 4. 시트에서 행 삭제 (아래에서부터 삭제해야 인덱스 안 꼬임)
                 rows_to_delete.sort(reverse=True)
                 try:
                     for r_idx in rows_to_delete:
@@ -1026,6 +1018,7 @@ elif menu == "🔍 이력/LOT 검색":
         if not df_search.empty:
             html_table = f"<h2>출고 이력 조회 결과</h2><p>조회일: {datetime.date.today()}</p>"
             html_table += "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 12px; table-layout: fixed;' border='1'>"
+            
             html_table += "<colgroup>"
             html_table += "<col style='width: 10%;'>" # 날짜
             html_table += "<col style='width: 15%;'>" # 거래처
