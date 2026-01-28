@@ -12,17 +12,10 @@ import io
 
 # --- 0. 아이콘 설정 함수 (강제 주입) ---
 def add_apple_touch_icon(image_path):
-    """
-    브라우저가 '바로가기'를 만들 때 로고를 가져가도록
-    HTML 헤더에 아이콘 정보를 강제로 주입합니다.
-    """
     try:
         if os.path.exists(image_path):
             with open(image_path, "rb") as f:
-                # 이미지를 읽어서 웹 코드로 변환 (Base64)
                 b64_icon = base64.b64encode(f.read()).decode("utf-8")
-                
-                # HTML Head에 다양한 아이콘 규격을 모두 선언
                 st.markdown(
                     f"""
                     <head>
@@ -31,7 +24,6 @@ def add_apple_touch_icon(image_path):
                         <link rel="apple-touch-icon" href="data:image/png;base64,{b64_icon}">
                         <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}">
                         <link rel="icon" sizes="192x192" href="data:image/png;base64,{b64_icon}">
-                        <link rel="icon" sizes="512x512" href="data:image/png;base64,{b64_icon}">
                     </head>
                     """,
                     unsafe_allow_html=True
@@ -39,11 +31,10 @@ def add_apple_touch_icon(image_path):
     except Exception as e:
         pass
 
-# --- 1. 페이지 설정 (가장 먼저 실행) ---
-# page_icon 설정이 탭 아이콘(Favicon)을 결정합니다.
+# --- 1. 페이지 설정 ---
 if os.path.exists("logo.png"):
     st.set_page_config(page_title="KPR ERP", page_icon="logo.png", layout="wide")
-    add_apple_touch_icon("logo.png") # 바로가기용 헤더 주입
+    add_apple_touch_icon("logo.png")
 else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
@@ -78,14 +69,13 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# --- 3. 데이터 로딩 (에러 방지 적용) ---
+# --- 3. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
     sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders]
-    
     for s in sheets:
-        df = pd.DataFrame() # 초기화 (UnboundLocalError 방지)
+        df = pd.DataFrame()
         if s:
             for attempt in range(5):
                 try:
@@ -100,7 +90,6 @@ def load_data():
                     time.sleep(1)
         data.append(df)
     
-    # Print_Mapping 시트 로드
     try:
         s_map = get_sheet(doc, 'Print_Mapping')
         if s_map:
@@ -117,7 +106,7 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# --- 4. 재고 업데이트 함수 ---
+# --- 4. 재고 업데이트 ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
@@ -134,7 +123,7 @@ def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_c
             sheet_inventory.append_row([factory, code, p_name, p_spec, p_type, p_color, qty])
     except: pass
 
-# --- 5. 헬퍼 함수들 ---
+# --- 5. 헬퍼 함수 ---
 def get_shape(code, df_items):
     shape = "-"
     if not df_items.empty:
@@ -166,7 +155,6 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
     <button onclick="print_{title.replace(" ", "_")}()" style="background-color: #4CAF50; border: none; color: white; padding: 10px 20px; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 5px;">🖨️ {title} 인쇄하기</button>"""
     return js_code
 
-# 제품군 분류 로직 (KA/KG/KA반제품/Compound/기타)
 def get_product_category(row):
     name = str(row['품목명']).upper()
     code = str(row['코드']).upper()
@@ -179,7 +167,7 @@ def get_product_category(row):
     if gubun == '반제품' or name.endswith('반'): return "반제품(기타)"
     return "기타"
 
-# --- 6. 로그인 처리 ---
+# --- 6. 로그인 ---
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
 if not st.session_state["authenticated"]:
     st.title("🔒 KPR ERP 시스템")
@@ -191,17 +179,13 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
-# 데이터 로드
 df_items, df_inventory, df_logs, df_bom, df_orders, df_mapping = load_data()
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
 # --- 7. 사이드바 ---
 with st.sidebar:
-    if os.path.exists("logo.png"): 
-        st.image("logo.png", use_container_width=True)
-    else:
-        st.header("🏭 KPR / Chamstek")
-        
+    if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
+    else: st.header("🏭 KPR / Chamstek")
     if st.button("🔄 새로고침"): st.cache_data.clear(); st.rerun()
     st.markdown("---")
     menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색"])
@@ -214,13 +198,10 @@ with st.sidebar:
 if menu == "대시보드":
     st.title("📊 공장 현황 대시보드")
     if not df_logs.empty:
-        # 기준일: 오늘 -> 어제
         yesterday_date = datetime.date.today() - datetime.timedelta(days=1)
         yesterday_str = yesterday_date.strftime("%Y-%m-%d")
         
         df_yesterday = df_logs[df_logs['날짜'] == yesterday_str]
-        
-        # 어제 생산량 집계
         prod_data = df_yesterday[df_yesterday['구분']=='생산'].copy() if '구분' in df_yesterday.columns else pd.DataFrame()
         
         total_prod = 0; ka_prod = 0; kg_prod = 0; ka_ban_prod = 0; cp_prod = 0
@@ -281,7 +262,6 @@ if menu == "대시보드":
                 
                 domain = ["KA", "KG", "KA반제품", "Compound", "기타"]
                 range_ = ["#1f77b4", "#ff7f0e", "#17becf", "#d62728", "#9467bd"] 
-                
                 chart = alt.Chart(final_df).mark_bar().encode(
                     x=alt.X('표시날짜', title='날짜 (요일)', axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('수량', title='생산량 (KG)'),
@@ -401,24 +381,11 @@ elif menu == "재고/생산 관리":
 
     st.title(f"📦 재고/생산 관리 ({factory})")
     
-    t1, t2, t3, t4 = st.tabs(["📦 재고 현황", "🏭 생산 이력 (조회/수정/삭제)", "📜 전체 로그", "🔩 BOM"])
+    # 🔥 [수정됨] 탭 순서 변경 (생산 이력이 맨 앞으로)
+    t1, t2, t3, t4 = st.tabs(["🏭 생산 이력 (조회/수정/삭제)", "📦 재고 현황", "📜 전체 로그", "🔩 BOM"])
     
+    # 🏭 1. 생산 이력 (삭제 기능 포함)
     with t1:
-        if not df_inventory.empty:
-            df_v = df_inventory.copy()
-            if not df_items.empty:
-                cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict()
-                df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
-            c1, c2 = st.columns(2)
-            fac_f = c1.radio("공장 (위치 확인용)", ["전체", "1공장", "2공장"], horizontal=True)
-            cat_f = c2.radio("품목", ["전체", "제품", "반제품", "원자재"], horizontal=True)
-            if fac_f != "전체": df_v = df_v[df_v['공장']==fac_f]
-            if cat_f != "전체": 
-                if cat_f=="제품": df_v = df_v[df_v['구분'].isin(['제품','완제품'])]
-                else: df_v = df_v[df_v['구분']==cat_f]
-            st.dataframe(df_v, use_container_width=True)
-    
-    with t2:
         st.subheader("🔍 생산 이력 관리 (조회 및 잘못된 기록 삭제)")
         if df_logs.empty: st.info("로그 데이터가 없습니다.")
         else:
@@ -475,10 +442,8 @@ elif menu == "재고/생산 관리":
                 del_code = target_row['코드']
                 del_qty = safe_float(target_row['수량'])
                 
-                # 1. 제품 재고 차감 (생산 취소)
                 update_inventory(del_fac, del_code, -del_qty)
                 
-                # 2. 관련 BOM(반제품/원자재) 찾기
                 linked_logs = df_logs[
                     (df_logs['날짜'] == del_date) & 
                     (df_logs['시간'] == del_time) & 
@@ -488,7 +453,6 @@ elif menu == "재고/생산 관리":
                 
                 rows_to_delete = [sel_del_id]
                 
-                # 3. BOM 재고 복구
                 if not linked_logs.empty:
                     for idx, row in linked_logs.iterrows():
                         mat_qty = safe_float(row['수량'])
@@ -507,6 +471,22 @@ elif menu == "재고/생산 관리":
                     st.rerun()
                 except Exception as e:
                     st.error(f"삭제 중 오류 발생: {e}")
+
+    # 📦 2. 재고 현황
+    with t2:
+        if not df_inventory.empty:
+            df_v = df_inventory.copy()
+            if not df_items.empty:
+                cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict()
+                df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
+            c1, c2 = st.columns(2)
+            fac_f = c1.radio("공장 (위치 확인용)", ["전체", "1공장", "2공장"], horizontal=True)
+            cat_f = c2.radio("품목", ["전체", "제품", "반제품", "원자재"], horizontal=True)
+            if fac_f != "전체": df_v = df_v[df_v['공장']==fac_f]
+            if cat_f != "전체": 
+                if cat_f=="제품": df_v = df_v[df_v['구분'].isin(['제품','완제품'])]
+                else: df_v = df_v[df_v['구분']==cat_f]
+            st.dataframe(df_v, use_container_width=True)
 
     with t3: st.dataframe(df_logs, use_container_width=True)
     with t4: st.dataframe(df_bom, use_container_width=True)
