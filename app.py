@@ -131,32 +131,17 @@ def add_apple_touch_icon(image_path):
             st.markdown(f"""<head><link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,{b64_icon}"><link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,{b64_icon}"></head>""", unsafe_allow_html=True)
     except: pass
 
-# 🔥 [업그레이드] 제품군 분류 헬퍼 함수 (KA반제품 분리)
+# 🔥 제품군 분류 헬퍼 함수
 def get_product_category(row):
     name = str(row['품목명']).upper()
     code = str(row['코드']).upper()
     gubun = str(row.get('구분', '')).strip()
     
-    # 1. Compound (가장 우선)
-    if 'CP' in name or 'COMPOUND' in name or 'CP' in code: 
-        return "Compound"
-    
-    # 2. KA 반제품 (KA이면서 '반'이 포함됨)
-    if ('KA' in name or 'KA' in code) and (gubun == '반제품' or name.endswith('반') or '반' in name):
-        return "KA반제품"
-    
-    # 3. KA 완제품
-    if 'KA' in name or 'KA' in code: 
-        return "KA"
-    
-    # 4. KG 완제품
-    if 'KG' in name or 'KG' in code: 
-        return "KG"
-    
-    # 5. 그 외 반제품
-    if gubun == '반제품' or name.endswith('반'):
-        return "반제품(기타)"
-        
+    if 'CP' in name or 'COMPOUND' in name or 'CP' in code: return "Compound"
+    if ('KA' in name or 'KA' in code) and (gubun == '반제품' or name.endswith('반') or '반' in name): return "KA반제품"
+    if 'KA' in name or 'KA' in code: return "KA"
+    if 'KG' in name or 'KG' in code: return "KG"
+    if gubun == '반제품' or name.endswith('반'): return "반제품(기타)"
     return "기타"
 
 # --- 5. 메인 앱 ---
@@ -196,18 +181,13 @@ with st.sidebar:
 if menu == "대시보드":
     st.title("📊 공장 현황 대시보드")
     if not df_logs.empty:
-        # 기준일: 오늘 -> 어제
         yesterday_date = datetime.date.today() - datetime.timedelta(days=1)
         yesterday_str = yesterday_date.strftime("%Y-%m-%d")
         
         df_yesterday = df_logs[df_logs['날짜'] == yesterday_str]
-        
-        # 어제 생산량 집계
         prod_data = df_yesterday[df_yesterday['구분']=='생산'].copy() if '구분' in df_yesterday.columns else pd.DataFrame()
         
-        total_prod = 0
-        ka_prod = 0; kg_prod = 0; ka_ban_prod = 0; cp_prod = 0
-        
+        total_prod = 0; ka_prod = 0; kg_prod = 0; ka_ban_prod = 0; cp_prod = 0
         if not prod_data.empty:
             prod_data['Category'] = prod_data.apply(get_product_category, axis=1)
             total_prod = prod_data['수량'].sum()
@@ -216,52 +196,31 @@ if menu == "대시보드":
             ka_ban_prod = prod_data[prod_data['Category']=='KA반제품']['수량'].sum()
             cp_prod = prod_data[prod_data['Category']=='Compound']['수량'].sum()
 
-        # 어제 출고량
         out_val = df_yesterday[df_yesterday['구분']=='출고']['수량'].sum() if '구분' in df_yesterday.columns else 0
-        
-        # 대기 주문
         pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
         
         st.subheader(f"📅 어제({yesterday_str}) 실적 요약")
         k1, k2, k3 = st.columns(3)
-        
         k1.metric("어제 총 생산", f"{total_prod:,.0f} kg")
-        k1.markdown(f"""
-        <div style="font-size:14px; color:gray;">
-        • KA: {ka_prod:,.0f} kg<br>
-        • KG: {kg_prod:,.0f} kg<br>
-        • KA반제품: {ka_ban_prod:,.0f} kg<br>
-        • Compound: {cp_prod:,.0f} kg
-        </div>
-        """, unsafe_allow_html=True)
-        
+        k1.markdown(f"<div style='font-size:14px; color:gray;'>• KA: {ka_prod:,.0f} kg<br>• KG: {kg_prod:,.0f} kg<br>• KA반제품: {ka_ban_prod:,.0f} kg<br>• Compound: {cp_prod:,.0f} kg</div>", unsafe_allow_html=True)
         k2.metric("어제 총 출고", f"{out_val:,.0f} kg")
         k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
-        
         st.markdown("---")
         
         if '구분' in df_logs.columns:
             st.subheader("📈 생산 추이 분석 (제품군별 비교)")
-            
             c_filter1, c_filter2 = st.columns([2, 1])
             with c_filter1:
                 week_ago = yesterday_date - datetime.timedelta(days=6)
                 search_range = st.date_input("조회 기간 설정", [week_ago, yesterday_date])
-            
             with c_filter2:
-                # 🔥 필터 옵션 업데이트
                 filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA", "KG", "KA반제품", "Compound"])
             
             df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
-            
             if len(search_range) == 2:
                 s_d, e_d = search_range
-                
-                # 1. 뼈대 만들기 (모든 날짜 + 모든 카테고리)
                 all_dates = pd.date_range(start=s_d, end=e_d)
-                # 🔥 카테고리 리스트 업데이트
                 categories = ["KA", "KG", "KA반제품", "Compound", "기타"]
-                
                 skeleton_data = []
                 for d in all_dates:
                     d_str = d.strftime('%Y-%m-%d')
@@ -269,38 +228,23 @@ if menu == "대시보드":
                         skeleton_data.append({'날짜': d_str, 'Category': c, '수량': 0})
                 df_skeleton = pd.DataFrame(skeleton_data)
 
-                # 2. 실제 데이터 가공
                 if not df_prod_log.empty:
                     df_prod_log['날짜'] = pd.to_datetime(df_prod_log['날짜']).dt.strftime('%Y-%m-%d')
-                    # 🔥 여기서 새로운 카테고리 분류 함수 적용
                     df_prod_log['Category'] = df_prod_log.apply(get_product_category, axis=1)
-                    
-                    if filter_opt != "전체":
-                        df_prod_log = df_prod_log[df_prod_log['Category'] == filter_opt]
-                    
+                    if filter_opt != "전체": df_prod_log = df_prod_log[df_prod_log['Category'] == filter_opt]
                     real_sum = df_prod_log.groupby(['날짜', 'Category'])['수량'].sum().reset_index()
-                else:
-                    real_sum = pd.DataFrame(columns=['날짜', 'Category', '수량'])
+                else: real_sum = pd.DataFrame(columns=['날짜', 'Category', '수량'])
                 
-                # 3. 뼈대와 병합
-                if filter_opt != "전체":
-                    df_skeleton = df_skeleton[df_skeleton['Category'] == filter_opt]
-                
+                if filter_opt != "전체": df_skeleton = df_skeleton[df_skeleton['Category'] == filter_opt]
                 final_df = pd.merge(df_skeleton, real_sum, on=['날짜', 'Category'], how='left', suffixes=('_base', '_real'))
                 final_df['수량'] = final_df['수량_real'].fillna(0)
-                
-                # 4. 요일 추가
                 final_df['날짜_dt'] = pd.to_datetime(final_df['날짜'])
                 weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
                 final_df['요일'] = final_df['날짜_dt'].dt.dayofweek.map(weekday_map)
                 final_df['표시날짜'] = final_df['날짜_dt'].dt.strftime('%m-%d') + " " + final_df['요일']
                 
-                # 5. 차트 그리기
-                # 🔥 색상 매핑 업데이트 (KA반제품: 하늘색, Compound: 빨강)
                 domain = ["KA", "KG", "KA반제품", "Compound", "기타"]
                 range_ = ["#1f77b4", "#ff7f0e", "#17becf", "#d62728", "#9467bd"] 
-                # KA(파랑), KG(주황), KA반제품(하늘색), Compound(빨강), 기타(보라)
-
                 chart = alt.Chart(final_df).mark_bar().encode(
                     x=alt.X('표시날짜', title='날짜 (요일)', axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('수량', title='생산량 (KG)'),
@@ -308,11 +252,8 @@ if menu == "대시보드":
                     xOffset='Category',
                     tooltip=['표시날짜', 'Category', alt.Tooltip('수량', format=',.0f')]
                 ).properties(height=400)
-                
                 st.altair_chart(chart, use_container_width=True)
-                
-            else:
-                st.info("기간을 선택해주세요.")
+            else: st.info("기간을 선택해주세요.")
     else: st.info("데이터를 불러오는 중입니다...")
 
 # [1] 재고/생산 관리
@@ -625,6 +566,10 @@ elif menu == "영업/출고 관리":
 
                 tgt = st.selectbox("수정/삭제할 주문 선택", pend['주문번호'].unique(), format_func=format_ord)
                 original_df = pend[pend['주문번호']==tgt].copy()
+                # 🔥 [추가] 자동 정렬 로직 (팔레트 번호순)
+                original_df['팔레트번호'] = pd.to_numeric(original_df['팔레트번호'], errors='coerce').fillna(999)
+                original_df = original_df.sort_values('팔레트번호')
+
                 if not df_items.empty:
                     code_to_type = df_items.set_index('코드')['타입'].to_dict()
                     original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
@@ -655,6 +600,10 @@ elif menu == "영업/출고 관리":
                                     new_rows.append({
                                         '주문번호': tgt, '날짜': base_info['날짜'], '거래처': base_info['거래처'], '코드': row['코드'], '품목명': row['품목명'], '수량': qty_val, '팔레트번호': row['팔레트번호'], '상태': '준비', '비고': row['비고'], 'LOT번호': row.get('LOT번호', '')
                                     })
+                                
+                                # 🔥 [핵심] 저장 전 팔레트 번호 기준으로 정렬 (중간 삽입 효과)
+                                new_rows.sort(key=lambda x: float(x['팔레트번호']) if str(x['팔레트번호']).replace('.','',1).isdigit() else 999)
+                                
                                 final_data = remaining_data + new_rows
                                 time.sleep(1)
                                 headers = list(all_records[0].keys()) if all_records else ['주문번호', '날짜', '거래처', '코드', '품목명', '수량', '팔레트번호', '상태', '비고', 'LOT번호']
@@ -662,7 +611,7 @@ elif menu == "영업/출고 관리":
                                 update_values = [headers]
                                 for r in final_data: update_values.append([r.get(h, "") for h in headers])
                                 sheet_orders.clear(); time.sleep(1); sheet_orders.update(update_values)
-                                st.cache_data.clear(); st.success("수정 완료!"); time.sleep(2); st.rerun()
+                                st.cache_data.clear(); st.success("수정 완료! (팔레트 번호순으로 자동 정렬됨)"); time.sleep(2); st.rerun()
                             except Exception as e: st.error(f"오류: {e}")
                 with c_edit2:
                     if st.button("🗑️ 이 주문 전체 삭제"):
@@ -692,6 +641,10 @@ elif menu == "영업/출고 관리":
 
                 tgt_p = st.selectbox("출력할 주문", pend['주문번호'].unique(), key='prt_sel', format_func=format_ord_prt)
                 dp = pend[pend['주문번호']==tgt_p].copy()
+                
+                # 🔥 [출력시] 팔레트 번호순 정렬 보장
+                dp['팔레트번호'] = pd.to_numeric(dp['팔레트번호'], errors='coerce').fillna(999)
+                dp = dp.sort_values('팔레트번호')
                 
                 if not dp.empty:
                     cli = dp.iloc[0]['거래처']
@@ -1042,9 +995,11 @@ elif menu == "🔍 이력/LOT 검색":
         valid_cols = [c for c in cols if c in df_search.columns]
         st.dataframe(df_search[valid_cols].sort_values('날짜', ascending=False), use_container_width=True)
         
+        # 🔥 [신규 추가] 조회 결과 인쇄 버튼
         if not df_search.empty:
             html_table = f"<h2>출고 이력 조회 결과</h2><p>조회일: {datetime.date.today()}</p>"
             html_table += "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 12px; table-layout: fixed;' border='1'>"
+            
             html_table += "<colgroup>"
             html_table += "<col style='width: 10%;'>" # 날짜
             html_table += "<col style='width: 15%;'>" # 거래처
