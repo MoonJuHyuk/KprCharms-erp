@@ -206,6 +206,7 @@ if menu == "대시보드":
             cp_prod = prod_data[prod_data['Category']=='Compound']['수량'].sum()
         out_val = df_yesterday[df_yesterday['구분']=='출고']['수량'].sum() if '구분' in df_yesterday.columns else 0
         pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
+        
         st.subheader(f"📅 어제({yesterday_str}) 실적 요약")
         k1, k2, k3 = st.columns(3)
         k1.metric("어제 총 생산", f"{total_prod:,.0f} kg")
@@ -213,6 +214,7 @@ if menu == "대시보드":
         k2.metric("어제 총 출고", f"{out_val:,.0f} kg")
         k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
         st.markdown("---")
+        
         if '구분' in df_logs.columns:
             st.subheader("📈 생산 추이 분석 (제품군별 비교)")
             c_filter1, c_filter2 = st.columns([2, 1])
@@ -551,12 +553,14 @@ elif menu == "영업/출고 관리":
                 original_df['팔레트번호'] = pd.to_numeric(original_df['팔레트번호'], errors='coerce').fillna(999)
                 original_df = original_df.sort_values('팔레트번호')
                 
-                # 타입 매핑 (기존 데이터가 없을 경우를 대비)
+                # 🔥 [수정] 타입 표시 로직 개선 (Orders 시트 값 우선 -> 없으면 Master 값)
                 if not df_items.empty:
                     code_to_type = df_items.set_index('코드')['타입'].to_dict()
-                    # 오더 시트에 타입이 없거나 비어있으면 매핑값 사용
-                    if '타입' not in original_df.columns: original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
-                    else: original_df['타입'] = original_df.apply(lambda x: code_to_type.get(x['코드'], '-') if pd.isna(x['타입']) or x['타입'] == '' else x['타입'], axis=1)
+                    if '타입' in original_df.columns:
+                        # 저장된 타입이 있고, 빈 값이 아니면 그거 사용. 없으면 마스터에서 가져옴
+                        original_df['타입'] = original_df.apply(lambda x: x['타입'] if pd.notna(x['타입']) and str(x['타입']).strip() != '' else code_to_type.get(x['코드'], '-'), axis=1)
+                    else:
+                        original_df['타입'] = original_df['코드'].map(code_to_type).fillna('-')
                 else: 
                     if '타입' not in original_df.columns: original_df['타입'] = "-"
 
@@ -572,11 +576,9 @@ elif menu == "영업/출고 관리":
                 with c_mod1:
                     st.markdown("#### ➕ 품목(행) 추가")
                     with st.form(key="add_item_form"):
-                        # 제품 마스터에서 코드 선택
                         all_item_codes = df_items['코드'].tolist() if not df_items.empty else []
                         new_code = st.selectbox("추가할 제품 코드", all_item_codes)
                         
-                        # 자동 채우기 정보
                         selected_item_info = df_items[df_items['코드'] == new_code].iloc[0] if not df_items.empty and new_code in all_item_codes else None
                         def_type = selected_item_info['타입'] if selected_item_info is not None else "-"
                         def_name = selected_item_info['품목명'] if selected_item_info is not None else "-"
@@ -588,34 +590,27 @@ elif menu == "영업/출고 관리":
                         new_note = st.text_input("비고 (Remark)", value="BOX")
                         
                         if st.form_submit_button("추가하기"):
-                            base_info = original_df.iloc[0] # 날짜, 거래처 정보 가져오기
-                            # Orders 시트 헤더 확인 (타입 컬럼이 있는지)
+                            base_info = original_df.iloc[0] 
                             headers = sheet_orders.row_values(1)
+                            # 🔥 [수정] 헤더에 '타입'이 없으면 강제 추가
+                            if '타입' not in headers:
+                                sheet_orders.update_cell(1, len(headers) + 1, '타입')
+                                headers.append('타입')
+                                time.sleep(0.5)
+                                
                             new_row = [tgt, base_info['날짜'], base_info['거래처'], new_code, def_name, new_qty, new_plt, "준비", new_note, ""]
                             
-                            # 타입 컬럼 처리 (헤더에 '타입'이 없으면 비고에 섞거나 무시되지만, 여기선 일단 있는 척 추가)
-                            # 만약 시트에 '타입' 헤더가 없다면 추가해주는게 좋음. 
-                            # 하지만 복잡해지므로 일단 리스트 끝에 추가하거나 기존 구조 유지.
-                            # 여기서는 기존 로직대로 '타입'을 저장할 곳이 없으면 저장 안됨. 
-                            # 해결책: sheet_orders에 '타입' 헤더가 없으면 맨 뒤에 추가한다고 가정.
-                            if '타입' in headers:
-                                type_idx = headers.index('타입')
-                                # 리스트 크기 맞추기
-                                while len(new_row) <= type_idx: new_row.append("")
-                                new_row[type_idx] = new_type
-                            else:
-                                # 타입 헤더가 없으면... 비고 뒤에라도 붙여야 하나? 
-                                # 사용자 요청: "타입 수정이 안된다" -> 시트에 저장할 공간이 필요함.
-                                # 임시방편: 일단 저장하고 봄.
-                                pass
-                                
+                            type_idx = headers.index('타입')
+                            # 리스트 길이 맞추기
+                            while len(new_row) <= type_idx: new_row.append("")
+                            new_row[type_idx] = new_type
+                            
                             sheet_orders.append_row(new_row)
                             st.success("추가되었습니다!"); st.cache_data.clear(); time.sleep(1); st.rerun()
 
                 # 3. 개별 수정/삭제 (Edit/Delete)
                 with c_mod2:
                     st.markdown("#### 🛠️ 개별 라인 수정/삭제")
-                    # 선택 목록 만들기 (인덱스 활용)
                     original_df['Unique_ID'] = range(len(original_df))
                     edit_opts = {r['Unique_ID']: f"PLT {r['팔레트번호']} | {r['코드']} ({r['수량']}kg)" for i, r in original_df.iterrows()}
                     
@@ -632,61 +627,41 @@ elif menu == "영업/출고 관리":
                         c_btn1, c_btn2 = st.columns(2)
                         with c_btn1:
                             if st.form_submit_button("💾 수정 저장"):
-                                # 전체 데이터를 읽어서 해당 행만 수정 후 다시 쓰기 (가장 안전)
                                 all_vals = sheet_orders.get_all_records()
-                                # 현재 주문의 데이터들만 추려서 인덱스 매칭은 위험하므로,
-                                # 전체 리스트에서 해당 주문번호를 가진 것들 중 순서대로 매칭
-                                # ...이건 복잡하므로, 삭제 후 재추가 방식 사용 (Row Index 찾기)
-                                
-                                # 시트 상의 실제 행 번호 찾기 (헤더 제외 + 1부터 시작)
-                                # 필터링된 데이터프레임의 인덱스는 원본과 다를 수 있음.
-                                # 따라서 전체 데이터를 다시 로드해서 비교.
-                                full_df = pd.DataFrame(sheet_orders.get_all_records())
-                                # 조건: 주문번호가 같고, 코드, 수량, 팔레트가 일치하는 행 찾기 (유니크하지 않을 수 있음)
-                                # 대안: 그냥 전체 덮어쓰기 (가장 확실)
-                                
-                                # 메모리 상에서 수정
-                                final_rows = []
-                                row_counter = 0
-                                target_found = False
-                                
                                 headers = sheet_orders.row_values(1)
-                                type_col_idx = headers.index('타입') if '타입' in headers else -1
+                                
+                                # 🔥 [수정] '타입' 헤더 확인 및 데이터 정규화
+                                if '타입' not in headers:
+                                    headers.append('타입')
+                                    # 기존 레코드들에 타입 키가 없을 수 있으므로 빈 값으로 초기화
+                                    for r in all_vals: r['타입'] = ""
                                 
                                 updated_data = []
-                                for i, r in enumerate(all_vals):
+                                row_counter = 0
+                                for r in all_vals:
+                                    # 모든 dict가 '타입' 키를 갖도록 보장
+                                    if '타입' not in r: r['타입'] = ""
+                                    
                                     if str(r['주문번호']) == str(tgt):
-                                        if row_counter == sel_edit_idx: # UI에서 선택한 순서와 일치하는지 확인
-                                            r['수량'] = ed_qty
-                                            r['팔레트번호'] = ed_plt
-                                            r['비고'] = ed_note
-                                            if type_col_idx != -1: r['타입'] = ed_type # 컬럼이 있으면 업데이트
-                                            target_found = True
+                                        if row_counter == sel_edit_idx: 
+                                            r['수량'] = ed_qty; r['팔레트번호'] = ed_plt; r['비고'] = ed_note
+                                            r['타입'] = ed_type # 강제 업데이트
                                         row_counter += 1
                                     updated_data.append([r.get(h, "") for h in headers])
                                 
-                                # 시트 클리어 후 업데이트
-                                sheet_orders.clear()
-                                sheet_orders.update([headers] + updated_data)
+                                sheet_orders.clear(); sheet_orders.update([headers] + updated_data)
                                 st.success("수정 완료!"); st.cache_data.clear(); time.sleep(1); st.rerun()
                                 
                         with c_btn2:
                             if st.form_submit_button("🗑️ 삭제"):
-                                # 위와 동일하게 전체 로드 후 해당 행 제외하고 저장
-                                all_vals = sheet_orders.get_all_records()
-                                headers = sheet_orders.row_values(1)
-                                new_data = []
-                                row_counter = 0
+                                all_vals = sheet_orders.get_all_records(); headers = sheet_orders.row_values(1)
+                                new_data = []; row_counter = 0
                                 for r in all_vals:
                                     if str(r['주문번호']) == str(tgt):
-                                        if row_counter != sel_edit_idx: # 선택된 인덱스가 아니면 유지
-                                            new_data.append([r.get(h, "") for h in headers])
+                                        if row_counter != sel_edit_idx: new_data.append([r.get(h, "") for h in headers])
                                         row_counter += 1
-                                    else:
-                                        new_data.append([r.get(h, "") for h in headers])
-                                
-                                sheet_orders.clear()
-                                sheet_orders.update([headers] + new_data)
+                                    else: new_data.append([r.get(h, "") for h in headers])
+                                sheet_orders.clear(); sheet_orders.update([headers] + new_data)
                                 st.success("삭제 완료!"); st.cache_data.clear(); time.sleep(1); st.rerun()
 
             else: st.info("대기 중인 주문이 없습니다.")
@@ -708,6 +683,16 @@ elif menu == "영업/출고 관리":
                 dp['팔레트번호'] = pd.to_numeric(dp['팔레트번호'], errors='coerce').fillna(999)
                 dp = dp.sort_values('팔레트번호')
                 
+                # 🔥 [수정] 출력 시에도 수정된 타입 반영
+                if not df_items.empty:
+                    code_to_type = df_items.set_index('코드')['타입'].to_dict()
+                    if '타입' in dp.columns:
+                        dp['타입'] = dp.apply(lambda x: x['타입'] if pd.notna(x['타입']) and str(x['타입']).strip() != '' else code_to_type.get(x['코드'], '-'), axis=1)
+                    else:
+                        dp['타입'] = dp['코드'].map(code_to_type).fillna('-')
+                else:
+                    if '타입' not in dp.columns: dp['타입'] = "-"
+
                 if not dp.empty:
                     cli = dp.iloc[0]['거래처']
                     ex_date = dp.iloc[0]['날짜']
@@ -760,12 +745,20 @@ elif menu == "영업/출고 관리":
                     excel_data = []
                     for plt_num, group in dp.groupby('팔레트번호'):
                         for _, r in group.iterrows():
+                            # SHAPE 값 결정 (저장된 타입이 있으면 그것을 shape로 사용, 아니면 자동변환)
+                            # 보통 SHAPE는 타입(Cubic/Cylindric)을 의미함
+                            final_shape = str(r['타입'])
+                            if "원통" in final_shape: final_shape = "CYLINDRIC"
+                            elif "큐빅" in final_shape: final_shape = "CUBICAL"
+                            elif "펠렛" in final_shape: final_shape = "PELLET"
+                            elif "파우더" in final_shape: final_shape = "POWDER"
+                            
                             excel_data.append({
                                 'PLT': plt_num,
                                 'ITEM NAME': code_map.get(str(r['코드']), str(r['코드'])),
                                 "Q'TY": r['수량'],
                                 'COLOR': df_items[df_items['코드'].astype(str)==str(r['코드'])].iloc[0]['색상'] if not df_items.empty else "-",
-                                'SHAPE': get_shape(r['코드'], df_items),
+                                'SHAPE': final_shape,
                                 'LOT#': r.get('LOT번호', ''),
                                 'REMARK': r['비고']
                             })
@@ -786,7 +779,10 @@ elif menu == "영업/출고 관리":
                         for plt_num, group in dp.groupby('팔레트번호'):
                             g_len = len(group); is_first = True
                             for _, r in group.iterrows():
-                                shp = get_shape(r['코드'], df_items)
+                                final_shape = str(r['타입'])
+                                if "원통" in final_shape: final_shape = "CYLINDRIC"
+                                elif "큐빅" in final_shape: final_shape = "CUBICAL"
+                                
                                 rem = r['비고']
                                 lot_no = r.get('LOT번호', '')
                                 clr = "-"
@@ -796,7 +792,7 @@ elif menu == "영업/출고 관리":
                                 display_name = code_map.get(str(r['코드']), str(r['코드']))
                                 pl_rows += "<tr>"
                                 if is_first: pl_rows += f"<td rowspan='{g_len}'>{plt_num}</td>"
-                                pl_rows += f"<td>{display_name}</td><td align='right'>{r['수량']:,.0f}</td><td align='center'>{clr}</td><td align='center'>{shp}</td><td align='center'>{lot_no}</td><td align='center'>{rem}</td></tr>"
+                                pl_rows += f"<td>{display_name}</td><td align='right'>{r['수량']:,.0f}</td><td align='center'>{clr}</td><td align='center'>{final_shape}</td><td align='center'>{lot_no}</td><td align='center'>{rem}</td></tr>"
                                 is_first = False; tot_q += r['수량']
                         
                         html_pl_raw = f"""
