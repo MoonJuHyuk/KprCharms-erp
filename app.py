@@ -538,7 +538,6 @@ elif menu == "재고/생산 관리":
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
-    # ... (기존과 동일)
     st.title("📑 영업 주문 및 출고 관리")
     if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
     
@@ -697,7 +696,6 @@ elif menu == "영업/출고 관리":
             else: st.info("대기 중인 주문이 없습니다.")
 
     with tab_prt:
-        # ... (이전과 동일)
         st.subheader("🖨️ Packing List & Labels")
         if not df_orders.empty and '상태' in df_orders.columns:
             pend = df_orders[df_orders['상태']=='준비']
@@ -1196,6 +1194,8 @@ elif menu == "🌊 환경/폐수 일지":
                 for d in date_list:
                     check_date = d.date()
                     d_str = d.strftime('%Y-%m-%d')
+                    weekday_kor = ["월", "화", "수", "목", "금", "토", "일"][check_date.weekday()]
+                    full_date_str = f"{d.strftime('%Y년 %m월 %d일')} {weekday_kor}요일"
                     
                     # 🔥 휴일 체크 삭제 -> 무조건 생산량 체크
                     # if is_holiday(check_date): continue
@@ -1224,9 +1224,6 @@ elif menu == "🌊 환경/폐수 일지":
                             base_resin = round(base_resin * random.uniform(0.99, 1.01))
                             base_pigment = round(0.2 * random.uniform(0.95, 1.05), 2)
                         
-                        weekday_kor = ["월", "화", "수", "목", "금", "토", "일"][check_date.weekday()]
-                        full_date_str = f"{d.strftime('%Y년 %m월 %d일')} {weekday_kor}요일"
-                        
                         row = {
                             "날짜": full_date_str,
                             "대표자": "문성인",
@@ -1240,7 +1237,22 @@ elif menu == "🌊 환경/폐수 일지":
                             "위탁량": "",
                             "기타": "전량 재이용"
                         }
-                        generated_rows.append(row)
+                    else:
+                        # 🔥 [신규] 생산 없는 날은 공란으로 처리
+                         row = {
+                            "날짜": full_date_str,
+                            "대표자": "",
+                            "환경기술인": "",
+                            "가동시간": "",
+                            "플라스틱재생칩": "",
+                            "합성수지": "",
+                            "안료": "",
+                            "용수사용량": "",
+                            "폐수발생량": "",
+                            "위탁량": "",
+                            "기타": ""
+                        }
+                    generated_rows.append(row)
                 
                 if generated_rows:
                     st.success(f"총 {len(generated_rows)}건의 일지 내역을 작성했습니다.")
