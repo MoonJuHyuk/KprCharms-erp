@@ -10,7 +10,6 @@ import base64
 import numpy as np
 import io
 import random
-# import holidays  <-- 이제 필요 없습니다!
 
 # --- 0. 아이콘 설정 함수 ---
 def add_apple_touch_icon(image_path):
@@ -69,7 +68,7 @@ sheet_inventory = get_sheet(doc, 'Inventory')
 sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
-sheet_wastewater = get_sheet(doc, 'Wastewater') 
+sheet_wastewater = get_sheet(doc, 'Wastewater')
 
 # --- 3. 데이터 로딩 ---
 @st.cache_data(ttl=60)
@@ -487,7 +486,6 @@ elif menu == "재고/생산 관리":
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
-    # ... (기존과 동일하지만, Real_Index 적용되어 있음)
     st.title("📑 영업 주문 및 출고 관리")
     if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
     
@@ -624,7 +622,7 @@ elif menu == "영업/출고 관리":
                                 for r in all_vals:
                                     if '타입' not in r: r['타입'] = ""
                                     if str(r['주문번호']) == str(tgt):
-                                        if row_counter == sel_real_idx: # 절대 위치 비교
+                                        if row_counter == sel_real_idx: 
                                             r['수량'] = ed_qty; r['팔레트번호'] = ed_plt; r['비고'] = ed_note; r['타입'] = ed_type
                                         row_counter += 1
                                     updated_data.append([r.get(h, "") for h in headers])
@@ -646,7 +644,6 @@ elif menu == "영업/출고 관리":
             else: st.info("대기 중인 주문이 없습니다.")
 
     with tab_prt:
-        # ... (이전과 동일)
         st.subheader("🖨️ Packing List & Labels")
         if not df_orders.empty and '상태' in df_orders.columns:
             pend = df_orders[df_orders['상태']=='준비']
@@ -1152,17 +1149,26 @@ elif menu == "🌊 환경/폐수 일지":
                     daily_prod = df_logs[(df_logs['날짜'] == d_str) & (df_logs['공장'] == '1공장') & (df_logs['구분'] == '생산')]
                     
                     if not daily_prod.empty:
-                        base_plastic = 500
-                        base_resin = 500
-                        base_pigment = 0.2
+                        # 🔥 1공장 생산량 합계 계산
+                        total_prod_qty = daily_prod['수량'].sum()
+                        
+                        # 🔥 원료 사용량 로직 (생산량의 80%)
+                        base_resin = round(total_prod_qty * 0.8) # 합성수지 (80%)
+                        base_plastic = 0 # 플라스틱 재생칩 (0)
+                        base_pigment = 0.2 # 안료 (기본값)
                         base_water = 2.16
-                        base_end_time = "22:00"
+                        
+                        # 🔥 가동 시간 로직 (토요일 체크)
+                        # weekday(): 0=월, 5=토, 6=일
+                        if check_date.weekday() == 5: # 토요일
+                            base_time_str = "08:00~15:00"
+                        else:
+                            base_time_str = "08:00~08:00" # 24시간 가동
                         
                         if use_random:
-                            base_plastic = round(500 * random.uniform(0.99, 1.01))
-                            base_resin = round(500 * random.uniform(0.99, 1.01))
+                            # 합성수지만 랜덤 변주 (시간은 고정)
+                            base_resin = round(base_resin * random.uniform(0.99, 1.01))
                             base_pigment = round(0.2 * random.uniform(0.95, 1.05), 2)
-                            base_end_time = f"22:{random.randint(0, 15):02d}"
                         
                         weekday_kor = ["월", "화", "수", "목", "금", "토", "일"][check_date.weekday()]
                         full_date_str = f"{d.strftime('%Y년 %m월 %d일')} {weekday_kor}요일"
@@ -1171,7 +1177,7 @@ elif menu == "🌊 환경/폐수 일지":
                             "날짜": full_date_str,
                             "대표자": "문성인",
                             "환경기술인": "문주혁",
-                            "가동시간": f"08:00~{base_end_time}",
+                            "가동시간": base_time_str,
                             "플라스틱재생칩": base_plastic,
                             "합성수지": base_resin,
                             "안료": base_pigment,
