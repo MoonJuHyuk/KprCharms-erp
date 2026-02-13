@@ -350,8 +350,10 @@ elif menu == "재고/생산 관리":
                 except Exception as e: st.error(f"오류: {e}")
 
     st.title(f"📦 재고/생산 관리 ({factory})")
-    t1, t2, t3, t4 = st.tabs(["🏭 생산 이력 (조회/수정/삭제)", "📦 재고 현황", "📜 전체 로그", "🔩 BOM"])
+    # 🔥 [수정] 탭 추가 (입고 이력)
+    t1, t2, t3, t4, t5 = st.tabs(["🏭 생산 이력", "📥 원자재 입고 이력", "📦 재고 현황", "📜 전체 로그", "🔩 BOM"])
     
+    # 🏭 1. 생산 이력
     with t1:
         st.subheader("🔍 생산 이력 관리 (조회 및 수정/삭제)")
         if df_logs.empty: st.info("로그 데이터가 없습니다.")
@@ -397,7 +399,6 @@ elif menu == "재고/생산 관리":
             
             col_act1, col_act2 = st.columns(2)
             
-            # 1. 삭제 버튼
             with col_act1:
                 if st.button("🗑️ 선택한 기록 삭제 (자동 반제품 복구)", type="primary"):
                     target_row = df_prod_log[df_prod_log['No'] == sel_target_id].iloc[0]
@@ -418,7 +419,6 @@ elif menu == "재고/생산 관리":
                         st.success("삭제 및 복구 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
                     except Exception as e: st.error(f"오류: {e}")
 
-            # 2. 수정 버튼 및 폼
             with col_act2:
                 if "edit_mode" not in st.session_state: st.session_state["edit_mode"] = False
                 if st.button("✏️ 선택한 기록 수정하기"):
@@ -466,7 +466,68 @@ elif menu == "재고/생산 관리":
                         st.session_state["edit_mode"] = False
                         st.success("수정 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
 
+    # 🔥 2. 입고 이력 (신규)
     with t2:
+        st.subheader("📥 원자재 입고 이력 조회 및 취소")
+        if df_logs.empty: st.info("데이터가 없습니다.")
+        else:
+            # 입고 데이터만 필터링
+            df_receipt_log = df_logs[df_logs['구분'] == '입고'].copy()
+            df_receipt_log['No'] = df_receipt_log.index + 2
+            
+            with st.expander("🔎 입고 내역 검색", expanded=True):
+                c_r1, c_r2 = st.columns(2)
+                min_dt_r = pd.to_datetime(df_receipt_log['날짜']).min().date() if not df_receipt_log.empty else datetime.date.today()
+                sch_date_r = c_r1.date_input("날짜 범위", [min_dt_r, datetime.date.today()], key="r_date")
+                sch_txt_r = c_r2.text_input("품목 검색", key="r_txt")
+                
+            df_res_r = df_receipt_log.copy()
+            if len(sch_date_r) == 2:
+                s_d, e_d = sch_date_r
+                df_res_r['날짜'] = pd.to_datetime(df_res_r['날짜'])
+                df_res_r = df_res_r[(df_res_r['날짜'].dt.date >= s_d) & (df_res_r['날짜'].dt.date <= e_d)]
+                df_res_r['날짜'] = df_res_r['날짜'].dt.strftime('%Y-%m-%d')
+            if sch_txt_r:
+                df_res_r = df_res_r[df_res_r['코드'].str.contains(sch_txt_r, case=False) | df_res_r['품목명'].str.contains(sch_txt_r, case=False)]
+            
+            # 리스트 표시
+            disp_cols_r = ['No', '날짜', '시간', '공장', '코드', '품목명', '규격', '수량', '비고']
+            final_cols_r = [c for c in disp_cols_r if c in df_res_r.columns]
+            st.dataframe(df_res_r[final_cols_r].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
+            
+            st.markdown("### 🗑️ 잘못된 입고 기록 삭제")
+            st.caption("삭제하면 해당 수량만큼 재고가 줄어듭니다 (입고 취소).")
+            
+            df_for_select_r = df_res_r.sort_values(['날짜', '시간'], ascending=False)
+            del_opts_r = {row['No']: f"No.{row['No']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_for_select_r.iterrows()}
+            
+            if del_opts_r:
+                sel_del_id_r = st.selectbox("삭제할 기록 선택", list(del_opts_r.keys()), format_func=lambda x: del_opts_r[x], key="sel_del_r")
+                
+                if st.button("❌ 입고 기록 삭제 (재고 차감)", type="primary", key="btn_del_r"):
+                    target_row_r = df_receipt_log[df_receipt_log['No'] == sel_del_id_r].iloc[0]
+                    
+                    # 재고 차감 (입고 취소니까 -수량)
+                    r_fac = target_row_r['공장']
+                    r_code = target_row_r['코드']
+                    r_qty = safe_float(target_row_r['수량'])
+                    
+                    update_inventory(r_fac, r_code, -r_qty)
+                    
+                    # 로그 삭제
+                    try:
+                        sheet_logs.delete_rows(int(sel_del_id_r))
+                        st.success("삭제 완료! 재고가 차감되었습니다.")
+                        time.sleep(1)
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"오류: {e}")
+            else:
+                st.info("삭제할 대상이 없습니다.")
+
+    # 📦 3. 재고 현황
+    with t3:
         if not df_inventory.empty:
             df_v = df_inventory.copy()
             if not df_items.empty:
@@ -481,11 +542,12 @@ elif menu == "재고/생산 관리":
                 else: df_v = df_v[df_v['구분']==cat_f]
             st.dataframe(df_v, use_container_width=True)
 
-    with t3: st.dataframe(df_logs, use_container_width=True)
-    with t4: st.dataframe(df_bom, use_container_width=True)
+    with t4: st.dataframe(df_logs, use_container_width=True)
+    with t5: st.dataframe(df_bom, use_container_width=True)
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
+    # ... (기존과 동일)
     st.title("📑 영업 주문 및 출고 관리")
     if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
     
@@ -622,7 +684,7 @@ elif menu == "영업/출고 관리":
                                 for r in all_vals:
                                     if '타입' not in r: r['타입'] = ""
                                     if str(r['주문번호']) == str(tgt):
-                                        if row_counter == sel_real_idx: 
+                                        if row_counter == sel_real_idx: # 절대 위치 비교
                                             r['수량'] = ed_qty; r['팔레트번호'] = ed_plt; r['비고'] = ed_note; r['타입'] = ed_type
                                         row_counter += 1
                                     updated_data.append([r.get(h, "") for h in headers])
@@ -644,6 +706,7 @@ elif menu == "영업/출고 관리":
             else: st.info("대기 중인 주문이 없습니다.")
 
     with tab_prt:
+        # ... (이전과 동일)
         st.subheader("🖨️ Packing List & Labels")
         if not df_orders.empty and '상태' in df_orders.columns:
             pend = df_orders[df_orders['상태']=='준비']
@@ -660,6 +723,7 @@ elif menu == "영업/출고 관리":
                 dp['팔레트번호'] = pd.to_numeric(dp['팔레트번호'], errors='coerce').fillna(999)
                 dp = dp.sort_values('팔레트번호')
                 
+                # 🔥 [수정] 출력 시에도 수정된 타입 반영
                 if not df_items.empty:
                     code_to_type = df_items.set_index('코드')['타입'].to_dict()
                     if '타입' in dp.columns:
@@ -721,6 +785,8 @@ elif menu == "영업/출고 관리":
                     excel_data = []
                     for plt_num, group in dp.groupby('팔레트번호'):
                         for _, r in group.iterrows():
+                            # SHAPE 값 결정 (저장된 타입이 있으면 그것을 shape로 사용, 아니면 자동변환)
+                            # 보통 SHAPE는 타입(Cubic/Cylindric)을 의미함
                             final_shape = str(r['타입'])
                             if "원통" in final_shape: final_shape = "CYLINDRIC"
                             elif "큐빅" in final_shape: final_shape = "CUBICAL"
