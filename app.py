@@ -10,7 +10,7 @@ import base64
 import numpy as np
 import io
 import random
-import holidays  # 라이브러리 필요
+# import holidays  <-- 이제 필요 없습니다!
 
 # --- 0. 아이콘 설정 함수 ---
 def add_apple_touch_icon(image_path):
@@ -69,13 +69,12 @@ sheet_inventory = get_sheet(doc, 'Inventory')
 sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
-sheet_wastewater = get_sheet(doc, 'Wastewater') # 🔥 신규 시트 연결
+sheet_wastewater = get_sheet(doc, 'Wastewater') 
 
 # --- 3. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
-    # 🔥 Wastewater 시트 추가 로딩
     sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders, sheet_wastewater]
     for s in sheets:
         df = pd.DataFrame()
@@ -165,11 +164,6 @@ def get_product_category(row):
     if gubun == '반제품' or name.endswith('반'): return "반제품(기타)"
     return "기타"
 
-# 🔥 [신규] 대한민국 공휴일 체크 함수
-def is_holiday(check_date):
-    kr_holidays = holidays.KR()
-    return check_date in kr_holidays or check_date.weekday() == 6 # 6=Sunday
-
 # --- 6. 로그인 ---
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
 if not st.session_state["authenticated"]:
@@ -182,7 +176,6 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
-# 🔥 데이터 로드 (Wastewater 포함)
 df_items, df_inventory, df_logs, df_bom, df_orders, df_wastewater, df_mapping = load_data()
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
@@ -192,7 +185,6 @@ with st.sidebar:
     else: st.header("🏭 KPR / Chamstek")
     if st.button("🔄 새로고침"): st.cache_data.clear(); st.rerun()
     st.markdown("---")
-    # 🔥 메뉴 추가 확인
     menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색", "🌊 환경/폐수 일지"])
     st.markdown("---")
     date = st.date_input("날짜", datetime.datetime.now())
@@ -495,6 +487,7 @@ elif menu == "재고/생산 관리":
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
+    # ... (기존과 동일하지만, Real_Index 적용되어 있음)
     st.title("📑 영업 주문 및 출고 관리")
     if sheet_orders is None: st.error("'Orders' 시트가 없습니다."); st.stop()
     
@@ -653,6 +646,7 @@ elif menu == "영업/출고 관리":
             else: st.info("대기 중인 주문이 없습니다.")
 
     with tab_prt:
+        # ... (이전과 동일)
         st.subheader("🖨️ Packing List & Labels")
         if not df_orders.empty and '상태' in df_orders.columns:
             pend = df_orders[df_orders['상태']=='준비']
@@ -1127,7 +1121,7 @@ elif menu == "🌊 환경/폐수 일지":
     # --- 탭 1: 생성 ---
     with tab_w1:
         st.markdown("### 📅 월간 운영일지 자동 생성")
-        st.info("💡 1공장에서 생산이 있었던 날짜를 기준으로 일지를 자동 생성합니다. (일요일/공휴일 제외)")
+        st.info("💡 1공장에서 생산이 있었던 날짜를 기준으로 일지를 자동 생성합니다.")
         
         c_gen1, c_gen2, c_gen3 = st.columns(3)
         current_year = datetime.date.today().year
@@ -1152,7 +1146,8 @@ elif menu == "🌊 환경/폐수 일지":
                     check_date = d.date()
                     d_str = d.strftime('%Y-%m-%d')
                     
-                    if is_holiday(check_date): continue
+                    # 🔥 휴일 체크 삭제 -> 무조건 생산량 체크
+                    # if is_holiday(check_date): continue
                     
                     daily_prod = df_logs[(df_logs['날짜'] == d_str) & (df_logs['공장'] == '1공장') & (df_logs['구분'] == '생산')]
                     
