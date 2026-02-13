@@ -350,10 +350,8 @@ elif menu == "재고/생산 관리":
                 except Exception as e: st.error(f"오류: {e}")
 
     st.title(f"📦 재고/생산 관리 ({factory})")
-    # 🔥 [수정] 탭 추가 (입고 이력)
     t1, t2, t3, t4, t5 = st.tabs(["🏭 생산 이력", "📥 원자재 입고 이력", "📦 재고 현황", "📜 전체 로그", "🔩 BOM"])
     
-    # 🏭 1. 생산 이력
     with t1:
         st.subheader("🔍 생산 이력 관리 (조회 및 수정/삭제)")
         if df_logs.empty: st.info("로그 데이터가 없습니다.")
@@ -466,12 +464,10 @@ elif menu == "재고/생산 관리":
                         st.session_state["edit_mode"] = False
                         st.success("수정 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
 
-    # 🔥 2. 입고 이력 (신규)
     with t2:
         st.subheader("📥 원자재 입고 이력 조회 및 취소")
         if df_logs.empty: st.info("데이터가 없습니다.")
         else:
-            # 입고 데이터만 필터링
             df_receipt_log = df_logs[df_logs['구분'] == '입고'].copy()
             df_receipt_log['No'] = df_receipt_log.index + 2
             
@@ -490,7 +486,6 @@ elif menu == "재고/생산 관리":
             if sch_txt_r:
                 df_res_r = df_res_r[df_res_r['코드'].str.contains(sch_txt_r, case=False) | df_res_r['품목명'].str.contains(sch_txt_r, case=False)]
             
-            # 리스트 표시
             disp_cols_r = ['No', '날짜', '시간', '공장', '코드', '품목명', '규격', '수량', '비고']
             final_cols_r = [c for c in disp_cols_r if c in df_res_r.columns]
             st.dataframe(df_res_r[final_cols_r].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
@@ -506,15 +501,12 @@ elif menu == "재고/생산 관리":
                 
                 if st.button("❌ 입고 기록 삭제 (재고 차감)", type="primary", key="btn_del_r"):
                     target_row_r = df_receipt_log[df_receipt_log['No'] == sel_del_id_r].iloc[0]
-                    
-                    # 재고 차감 (입고 취소니까 -수량)
                     r_fac = target_row_r['공장']
                     r_code = target_row_r['코드']
                     r_qty = safe_float(target_row_r['수량'])
                     
                     update_inventory(r_fac, r_code, -r_qty)
                     
-                    # 로그 삭제
                     try:
                         sheet_logs.delete_rows(int(sel_del_id_r))
                         st.success("삭제 완료! 재고가 차감되었습니다.")
@@ -526,7 +518,6 @@ elif menu == "재고/생산 관리":
             else:
                 st.info("삭제할 대상이 없습니다.")
 
-    # 📦 3. 재고 현황
     with t3:
         if not df_inventory.empty:
             df_v = df_inventory.copy()
@@ -684,7 +675,7 @@ elif menu == "영업/출고 관리":
                                 for r in all_vals:
                                     if '타입' not in r: r['타입'] = ""
                                     if str(r['주문번호']) == str(tgt):
-                                        if row_counter == sel_real_idx: # 절대 위치 비교
+                                        if row_counter == sel_real_idx: 
                                             r['수량'] = ed_qty; r['팔레트번호'] = ed_plt; r['비고'] = ed_note; r['타입'] = ed_type
                                         row_counter += 1
                                     updated_data.append([r.get(h, "") for h in headers])
@@ -723,7 +714,6 @@ elif menu == "영업/출고 관리":
                 dp['팔레트번호'] = pd.to_numeric(dp['팔레트번호'], errors='coerce').fillna(999)
                 dp = dp.sort_values('팔레트번호')
                 
-                # 🔥 [수정] 출력 시에도 수정된 타입 반영
                 if not df_items.empty:
                     code_to_type = df_items.set_index('코드')['타입'].to_dict()
                     if '타입' in dp.columns:
@@ -785,8 +775,6 @@ elif menu == "영업/출고 관리":
                     excel_data = []
                     for plt_num, group in dp.groupby('팔레트번호'):
                         for _, r in group.iterrows():
-                            # SHAPE 값 결정 (저장된 타입이 있으면 그것을 shape로 사용, 아니면 자동변환)
-                            # 보통 SHAPE는 타입(Cubic/Cylindric)을 의미함
                             final_shape = str(r['타입'])
                             if "원통" in final_shape: final_shape = "CYLINDRIC"
                             elif "큐빅" in final_shape: final_shape = "CUBICAL"
@@ -1170,21 +1158,21 @@ elif menu == "🔍 이력/LOT 검색":
             
             st.components.v1.html(create_print_button(html_table, "Shipment History Search Result", orientation="landscape"), height=50)
 
-# 🔥 [신규] 환경/폐수 일지 메뉴
+# 🔥 [신규] 환경/폐수 일지 메뉴 (관리자 모드 UI 적용)
 elif menu == "🌊 환경/폐수 일지":
-    st.title("🌊 폐수배출시설 운영일지 (자동화)")
+    st.title("🌊 폐수배출시설 운영일지")
     
     if sheet_wastewater is None:
         st.error("⚠️ 'Wastewater' 시트가 없습니다. 구글 시트에 탭을 추가해주세요.")
         st.stop()
     
     # 탭 구성
-    tab_w1, tab_w2 = st.tabs(["📅 월간 일지 생성", "📋 조회 및 다운로드"])
+    tab_w1, tab_w2 = st.tabs(["📅 운영일지 작성", "📋 이력 조회"])
     
     # --- 탭 1: 생성 ---
     with tab_w1:
-        st.markdown("### 📅 월간 운영일지 자동 생성")
-        st.info("💡 1공장에서 생산이 있었던 날짜를 기준으로 일지를 자동 생성합니다.")
+        st.markdown("### 📅 월간 운영일지 작성")
+        st.info("💡 1공장 생산 실적을 기반으로 운영일지를 작성합니다.")
         
         c_gen1, c_gen2, c_gen3 = st.columns(3)
         current_year = datetime.date.today().year
@@ -1194,7 +1182,7 @@ elif menu == "🌊 환경/폐수 일지":
         sel_month = c_gen2.number_input("월", 1, 12, current_month)
         use_random = c_gen3.checkbox("랜덤 변주 적용 (±1%)", value=False, help="체크하면 수치를 조금씩 다르게 생성합니다.")
         
-        if st.button("🚀 일지 데이터 생성 (미리보기)"):
+        if st.button("📝 일지 내역 작성"):
             if df_logs.empty:
                 st.warning("생산 로그 데이터가 없습니다.")
             else:
@@ -1255,17 +1243,17 @@ elif menu == "🌊 환경/폐수 일지":
                         generated_rows.append(row)
                 
                 if generated_rows:
-                    st.success(f"총 {len(generated_rows)}건의 데이터를 생성했습니다.")
+                    st.success(f"총 {len(generated_rows)}건의 일지 내역을 작성했습니다.")
                     df_preview = pd.DataFrame(generated_rows)
                     st.session_state['wastewater_preview'] = df_preview
                 else:
                     st.warning("해당 월에 1공장 생산 기록이 없습니다.")
                     
         if 'wastewater_preview' in st.session_state and not st.session_state['wastewater_preview'].empty:
-            st.write("▼ 생성된 데이터 미리보기 (수정 가능)")
+            st.write("▼ 작성된 데이터 확인 (수정 가능)")
             edited_log = st.data_editor(st.session_state['wastewater_preview'], num_rows="dynamic", use_container_width=True)
             
-            if st.button("💾 구글 시트에 저장"):
+            if st.button("💾 일지 저장"):
                 try:
                     new_values = []
                     for idx, row in edited_log.iterrows():
