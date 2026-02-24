@@ -59,23 +59,37 @@ def get_connection():
 
 doc = get_connection()
 
-def get_sheet(doc, name):
-    try: return doc.worksheet(name)
-    except: return None
+# 🔥 [수정] 시트가 없으면 자동으로 만들어주는 강력한 함수
+def get_sheet(doc, name, create_headers=None):
+    if doc is None: return None
+    try:
+        return doc.worksheet(name)
+    except:
+        if create_headers:
+            try:
+                ws = doc.add_worksheet(title=name, rows="1000", cols="20")
+                ws.append_row(create_headers)
+                return ws
+            except: return None
+        return None
 
 sheet_items = get_sheet(doc, 'Items')
 sheet_inventory = get_sheet(doc, 'Inventory')
 sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
-sheet_wastewater = get_sheet(doc, 'Wastewater')
-sheet_meetings = get_sheet(doc, 'Meetings') # 🔥 신규 시트 연결
+
+# 🔥 없는 경우 자동 생성되도록 헤더 정보 함께 전달
+ww_headers = ['날짜', '대표자', '환경기술인', '가동시간', '플라스틱재생칩', '합성수지', '안료', '용수사용량', '폐수발생량', '위탁량', '기타']
+sheet_wastewater = get_sheet(doc, 'Wastewater', ww_headers)
+
+mtg_headers = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
+sheet_meetings = get_sheet(doc, 'Meetings', mtg_headers)
 
 # --- 3. 데이터 로딩 ---
 @st.cache_data(ttl=60)
 def load_data():
     data = []
-    # 🔥 Meetings 시트 추가 로딩
     sheets = [sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders, sheet_wastewater, sheet_meetings]
     for s in sheets:
         df = pd.DataFrame()
@@ -177,7 +191,6 @@ if not st.session_state["authenticated"]:
             else: st.error("암호가 틀렸습니다.")
     st.stop()
 
-# df_meetings 추가
 df_items, df_inventory, df_logs, df_bom, df_orders, df_wastewater, df_meetings, df_mapping = load_data()
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
@@ -187,7 +200,6 @@ with st.sidebar:
     else: st.header("🏭 KPR / Chamstek")
     if st.button("🔄 새로고침"): st.cache_data.clear(); st.rerun()
     st.markdown("---")
-    # 🔥 메뉴 추가
     menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색", "🌊 환경/폐수 일지", "📋 주간 회의 & 개선사항"])
     st.markdown("---")
     date = st.date_input("날짜", datetime.datetime.now())
@@ -1181,6 +1193,7 @@ elif menu == "🔍 이력/LOT 검색":
             
             st.components.v1.html(create_print_button(html_table, "Shipment History Search Result", orientation="landscape"), height=50)
 
+# [5] 환경/폐수 일지
 elif menu == "🌊 환경/폐수 일지":
     st.title("🌊 폐수배출시설 운영일지")
     
@@ -1287,46 +1300,43 @@ elif menu == "🌊 환경/폐수 일지":
         else:
             st.info("저장된 데이터가 없습니다.")
 
-# 🔥 [신규] 주간 회의 & 개선사항 메뉴
+# 🔥 [신규] 주간 회의 & 개선사항 메뉴 (수정 권한 확대 & 검색/인쇄 추가)
 elif menu == "📋 주간 회의 & 개선사항":
     st.title("📋 현장 주간 회의 및 개선사항 관리")
     st.caption("격주로 진행되는 공장별 개선사항을 기록하고 진행률을 추적합니다.")
 
     if sheet_meetings is None:
-        st.error("⚠️ 'Meetings' 시트가 없습니다. 구글 시트에 새 탭을 추가하고 헤더(ID, 작성일, 공장, 안건내용, 담당자, 상태, 비고)를 입력해주세요.")
+        st.error("⚠️ 통신 에러로 시트를 만들 수 없습니다. 구글 시트에 접근 권한을 확인해주세요.")
         st.stop()
 
-    tab_m1, tab_m2, tab_m3 = st.tabs(["🚀 진행 중인 안건 (To-Do)", "➕ 신규 안건 등록", "✅ 완료된 안건 (Done)"])
+    tab_m1, tab_m2, tab_m3 = st.tabs(["🚀 진행 중인 안건 (To-Do)", "➕ 신규 안건 등록", "🔍 안건 이력 및 인쇄"])
 
     # --- 탭 1: 진행 중인 안건 ---
     with tab_m1:
         st.subheader("🚀 진행 중인 안건 관리")
+        st.info("💡 표 안의 내용을 클릭하면 날짜, 담당자 등 모든 항목을 수정할 수 있습니다.")
         
-        # 필터링
         c_m1, c_m2 = st.columns([1, 3])
         mtg_fac_filter = c_m1.radio("공장 필터", ["전체", "1공장", "2공장", "공통"], horizontal=True)
         
         if not df_meetings.empty:
-            # 상태가 완료가 아닌 것들만 필터링
             df_open = df_meetings[df_meetings['상태'] != '완료'].copy()
-            
             if mtg_fac_filter != "전체":
                 df_open = df_open[df_open['공장'] == mtg_fac_filter]
                 
             if not df_open.empty:
                 st.write(f"현재 해결해야 할 안건: **{len(df_open)}건**")
                 
-                # 수정 가능한 Data Editor (상태와 비고만 수정 가능하도록 설정)
+                # 🔥 모든 항목 수정 가능 (ID만 빼고)
                 edit_cols = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
-                
                 edited_mtg = st.data_editor(
                     df_open[edit_cols],
                     column_config={
                         "ID": st.column_config.TextColumn("ID", disabled=True),
-                        "작성일": st.column_config.TextColumn("작성일", disabled=True),
-                        "공장": st.column_config.TextColumn("공장", disabled=True),
-                        "안건내용": st.column_config.TextColumn("안건내용", disabled=True),
-                        "담당자": st.column_config.TextColumn("담당자", disabled=True),
+                        "작성일": st.column_config.TextColumn("작성일"),
+                        "공장": st.column_config.SelectboxColumn("공장", options=["1공장", "2공장", "공통"]),
+                        "안건내용": st.column_config.TextColumn("안건내용"),
+                        "담당자": st.column_config.TextColumn("담당자"),
                         "상태": st.column_config.SelectboxColumn("상태", options=["진행중", "보류", "완료"], required=True),
                         "비고": st.column_config.TextColumn("진행상황 / 비고")
                     },
@@ -1343,12 +1353,15 @@ elif menu == "📋 주간 회의 & 개선사항":
                             
                             updated_data = []
                             for r in all_vals:
-                                # 변경된 데이터프레임에서 동일한 ID를 찾음
                                 match = edited_mtg[edited_mtg['ID'] == r['ID']]
                                 if not match.empty:
-                                    # 상태나 비고가 변경되었다면 덮어씀
-                                    r['상태'] = match.iloc[0]['상태']
-                                    r['비고'] = match.iloc[0]['비고']
+                                    # 🔥 사용자가 수정한 모든 값을 덮어쓰기
+                                    r['작성일'] = str(match.iloc[0]['작성일'])
+                                    r['공장'] = str(match.iloc[0]['공장'])
+                                    r['안건내용'] = str(match.iloc[0]['안건내용'])
+                                    r['담당자'] = str(match.iloc[0]['담당자'])
+                                    r['상태'] = str(match.iloc[0]['상태'])
+                                    r['비고'] = str(match.iloc[0]['비고'])
                                 updated_data.append([r.get(h, "") for h in headers])
                             
                             sheet_meetings.clear()
@@ -1356,7 +1369,6 @@ elif menu == "📋 주간 회의 & 개선사항":
                             st.success("저장 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
                         except Exception as e:
                             st.error(f"저장 실패: {e}")
-                            
             else:
                 st.success("🎉 현재 진행 중인 안건이 없습니다! 완벽합니다.")
         else:
@@ -1383,17 +1395,13 @@ elif menu == "📋 주간 회의 & 개선사항":
                     st.error("안건 내용을 입력해주세요.")
                 else:
                     try:
-                        # 고유 ID 생성 (M-날짜시간-난수)
                         new_id = f"M-{datetime.datetime.now().strftime('%y%m%d%H%M')}-{random.randint(10,99)}"
-                        
                         headers = sheet_meetings.row_values(1)
-                        if not headers: # 시트가 완전히 비어있을 경우 방어
+                        if not headers:
                             headers = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
                             sheet_meetings.append_row(headers)
                             
                         new_row = [new_id, n_date.strftime('%Y-%m-%d'), n_fac, n_content, n_assignee, n_status, n_note]
-                        
-                        # 헤더 길이에 맞게 리스트 조정 (만약 헤더가 더 많다면 빈칸 추가)
                         while len(new_row) < len(headers): new_row.append("")
                         
                         sheet_meetings.append_row(new_row)
@@ -1401,28 +1409,57 @@ elif menu == "📋 주간 회의 & 개선사항":
                     except Exception as e:
                         st.error(f"등록 실패: {e}")
 
-    # --- 탭 3: 완료된 안건 ---
+    # --- 탭 3: 안건 조회 및 인쇄 ---
     with tab_m3:
-        st.subheader("✅ 완료된 안건 이력 (Done)")
+        st.subheader("🔍 전체 안건 이력 및 인쇄")
         if not df_meetings.empty:
-            df_done = df_meetings[df_meetings['상태'] == '완료'].copy()
-            if not df_done.empty:
-                # 최신 완료 항목이 위로 오도록 정렬 (작성일 기준)
-                st.dataframe(df_done[['작성일', '공장', '안건내용', '담당자', '비고']].sort_values('작성일', ascending=False), use_container_width=True, hide_index=True)
+            df_print = df_meetings.copy()
+            
+            # 🔥 필터 기능 추가
+            with st.expander("🔎 검색 필터 열기", expanded=True):
+                c_f1, c_f2, c_f3 = st.columns(3)
+                min_date_m = pd.to_datetime(df_print['작성일'], errors='coerce').min()
+                min_date_val = min_date_m.date() if pd.notnull(min_date_m) else datetime.date.today()
                 
-                # 프린트 기능 (이전 프린트물 대체용)
-                html_done = f"""
-                <h2 style='text-align:center;'>완료된 개선사항 이력</h2>
-                <table style='width:100%; border-collapse: collapse; text-align: left; font-size: 14px;' border='1'>
-                    <thead style='background-color: #f2f2f2; text-align: center;'>
-                        <tr><th>작성일</th><th>공장</th><th>안건내용</th><th>담당자</th><th>비고</th></tr>
-                    </thead>
-                    <tbody>
-                """
-                for _, row in df_done.sort_values('작성일', ascending=False).iterrows():
-                    html_done += f"<tr><td align='center'>{row['작성일']}</td><td align='center'>{row['공장']}</td><td>{row['안건내용']}</td><td align='center'>{row['담당자']}</td><td>{row['비고']}</td></tr>"
-                html_done += "</tbody></table>"
-                
-                st.components.v1.html(create_print_button(html_done, "Completed Items Report", "portrait"), height=50)
-            else:
-                st.info("아직 완료된 안건이 없습니다.")
+                sch_date_m = c_f1.date_input("조회 기간", [min_date_val, datetime.date.today()])
+                all_assignees = ["전체"] + sorted([str(x) for x in df_print['담당자'].unique() if str(x).strip() != ''])
+                sch_assignee = c_f2.selectbox("담당자", all_assignees)
+                sch_status = c_f3.selectbox("상태", ["전체", "진행중", "보류", "완료"])
+
+            if len(sch_date_m) == 2:
+                s_d, e_d = sch_date_m
+                df_print['작성일_dt'] = pd.to_datetime(df_print['작성일'], errors='coerce')
+                df_print = df_print[(df_print['작성일_dt'].dt.date >= s_d) & (df_print['작성일_dt'].dt.date <= e_d)]
+            
+            if sch_assignee != "전체": df_print = df_print[df_print['담당자'] == sch_assignee]
+            if sch_status != "전체": df_print = df_print[df_print['상태'] == sch_status]
+            
+            st.write(f"📋 조회 결과: 총 {len(df_print)}건")
+            show_cols = ['작성일', '공장', '안건내용', '담당자', '상태', '비고']
+            st.dataframe(df_print[show_cols].sort_values('작성일', ascending=False), use_container_width=True, hide_index=True)
+            
+            # 🔥 인쇄 기능
+            html_mtg = f"""
+            <h2 style='text-align:center;'>현장 개선사항 및 안건 이력</h2>
+            <p style='text-align:right;'>출력일: {datetime.date.today()}</p>
+            <table style='width:100%; border-collapse: collapse; text-align: left; font-size: 14px;' border='1'>
+                <colgroup>
+                    <col style='width: 12%;'>
+                    <col style='width: 8%;'>
+                    <col style='width: 40%;'>
+                    <col style='width: 10%;'>
+                    <col style='width: 10%;'>
+                    <col style='width: 20%;'>
+                </colgroup>
+                <thead style='background-color: #f2f2f2; text-align: center;'>
+                    <tr><th>작성일</th><th>공장</th><th>안건내용</th><th>담당자</th><th>상태</th><th>비고</th></tr>
+                </thead>
+                <tbody>
+            """
+            for _, row in df_print.sort_values('작성일', ascending=False).iterrows():
+                html_mtg += f"<tr><td align='center'>{row.get('작성일','')}</td><td align='center'>{row.get('공장','')}</td><td>{row.get('안건내용','')}</td><td align='center'>{row.get('담당자','')}</td><td align='center'>{row.get('상태','')}</td><td>{row.get('비고','')}</td></tr>"
+            html_mtg += "</tbody></table>"
+            
+            st.components.v1.html(create_print_button(html_mtg, "Meeting Items Report", "landscape"), height=50)
+        else:
+            st.info("등록된 데이터가 없습니다.")
