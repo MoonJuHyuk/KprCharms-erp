@@ -1193,12 +1193,10 @@ elif menu == "🔍 이력/LOT 검색":
             
             st.components.v1.html(create_print_button(html_table, "Shipment History Search Result", orientation="landscape"), height=50)
 
-# [5] 환경/폐수 일지
 elif menu == "🌊 환경/폐수 일지":
     st.title("🌊 폐수배출시설 운영일지")
-    
     if sheet_wastewater is None:
-        st.error("⚠️ 'Wastewater' 시트가 없습니다. 구글 시트에 탭을 추가해주세요.")
+        st.error("⚠️ 통신 에러로 시트를 만들 수 없습니다. 구글 시트에 접근 권한을 확인해주세요.")
         st.stop()
     
     tab_w1, tab_w2 = st.tabs(["📅 운영일지 작성", "📋 이력 조회"])
@@ -1300,7 +1298,6 @@ elif menu == "🌊 환경/폐수 일지":
         else:
             st.info("저장된 데이터가 없습니다.")
 
-# 🔥 [신규] 주간 회의 & 개선사항 메뉴 (수정 권한 확대 & 검색/인쇄 추가)
 elif menu == "📋 주간 회의 & 개선사항":
     st.title("📋 현장 주간 회의 및 개선사항 관리")
     st.caption("격주로 진행되는 공장별 개선사항을 기록하고 진행률을 추적합니다.")
@@ -1311,7 +1308,6 @@ elif menu == "📋 주간 회의 & 개선사항":
 
     tab_m1, tab_m2, tab_m3 = st.tabs(["🚀 진행 중인 안건 (To-Do)", "➕ 신규 안건 등록", "🔍 안건 이력 및 인쇄"])
 
-    # --- 탭 1: 진행 중인 안건 ---
     with tab_m1:
         st.subheader("🚀 진행 중인 안건 관리")
         st.info("💡 표 안의 내용을 클릭하면 날짜, 담당자 등 모든 항목을 수정할 수 있습니다.")
@@ -1326,8 +1322,6 @@ elif menu == "📋 주간 회의 & 개선사항":
                 
             if not df_open.empty:
                 st.write(f"현재 해결해야 할 안건: **{len(df_open)}건**")
-                
-                # 🔥 모든 항목 수정 가능 (ID만 빼고)
                 edit_cols = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
                 edited_mtg = st.data_editor(
                     df_open[edit_cols],
@@ -1355,7 +1349,6 @@ elif menu == "📋 주간 회의 & 개선사항":
                             for r in all_vals:
                                 match = edited_mtg[edited_mtg['ID'] == r['ID']]
                                 if not match.empty:
-                                    # 🔥 사용자가 수정한 모든 값을 덮어쓰기
                                     r['작성일'] = str(match.iloc[0]['작성일'])
                                     r['공장'] = str(match.iloc[0]['공장'])
                                     r['안건내용'] = str(match.iloc[0]['안건내용'])
@@ -1374,7 +1367,6 @@ elif menu == "📋 주간 회의 & 개선사항":
         else:
             st.info("등록된 회의 안건이 없습니다.")
 
-    # --- 탭 2: 신규 안건 등록 ---
     with tab_m2:
         st.subheader("➕ 신규 개선사항 및 안건 등록")
         with st.form("new_meeting_item"):
@@ -1409,15 +1401,14 @@ elif menu == "📋 주간 회의 & 개선사항":
                     except Exception as e:
                         st.error(f"등록 실패: {e}")
 
-    # --- 탭 3: 안건 조회 및 인쇄 ---
     with tab_m3:
         st.subheader("🔍 전체 안건 이력 및 인쇄")
         if not df_meetings.empty:
             df_print = df_meetings.copy()
             
-            # 🔥 필터 기능 추가
+            # 🔥 [수정] 검색 필터에 '공장' 추가 (4분할)
             with st.expander("🔎 검색 필터 열기", expanded=True):
-                c_f1, c_f2, c_f3 = st.columns(3)
+                c_f1, c_f2, c_f3, c_f4 = st.columns(4)
                 min_date_m = pd.to_datetime(df_print['작성일'], errors='coerce').min()
                 min_date_val = min_date_m.date() if pd.notnull(min_date_m) else datetime.date.today()
                 
@@ -1425,6 +1416,7 @@ elif menu == "📋 주간 회의 & 개선사항":
                 all_assignees = ["전체"] + sorted([str(x) for x in df_print['담당자'].unique() if str(x).strip() != ''])
                 sch_assignee = c_f2.selectbox("담당자", all_assignees)
                 sch_status = c_f3.selectbox("상태", ["전체", "진행중", "보류", "완료"])
+                sch_fac_m = c_f4.selectbox("공장", ["전체", "1공장", "2공장", "공통"])
 
             if len(sch_date_m) == 2:
                 s_d, e_d = sch_date_m
@@ -1433,15 +1425,17 @@ elif menu == "📋 주간 회의 & 개선사항":
             
             if sch_assignee != "전체": df_print = df_print[df_print['담당자'] == sch_assignee]
             if sch_status != "전체": df_print = df_print[df_print['상태'] == sch_status]
+            # 🔥 공장 필터 적용
+            if sch_fac_m != "전체": df_print = df_print[df_print['공장'] == sch_fac_m]
             
             st.write(f"📋 조회 결과: 총 {len(df_print)}건")
             show_cols = ['작성일', '공장', '안건내용', '담당자', '상태', '비고']
             st.dataframe(df_print[show_cols].sort_values('작성일', ascending=False), use_container_width=True, hide_index=True)
             
-            # 🔥 인쇄 기능
+            # 🔥 인쇄 기능 (필터링된 결과만 출력됨)
             html_mtg = f"""
             <h2 style='text-align:center;'>현장 개선사항 및 안건 이력</h2>
-            <p style='text-align:right;'>출력일: {datetime.date.today()}</p>
+            <p style='text-align:right;'>출력일: {datetime.date.today()} / 대상 공장: {sch_fac_m}</p>
             <table style='width:100%; border-collapse: collapse; text-align: left; font-size: 14px;' border='1'>
                 <colgroup>
                     <col style='width: 12%;'>
