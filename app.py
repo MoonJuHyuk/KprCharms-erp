@@ -59,7 +59,6 @@ def get_connection():
 
 doc = get_connection()
 
-# 🔥 [수정] 시트가 없으면 자동으로 만들어주는 강력한 함수
 def get_sheet(doc, name, create_headers=None):
     if doc is None: return None
     try:
@@ -79,7 +78,6 @@ sheet_logs = get_sheet(doc, 'Logs')
 sheet_bom = get_sheet(doc, 'BOM')
 sheet_orders = get_sheet(doc, 'Orders')
 
-# 🔥 없는 경우 자동 생성되도록 헤더 정보 함께 전달
 ww_headers = ['날짜', '대표자', '환경기술인', '가동시간', '플라스틱재생칩', '합성수지', '안료', '용수사용량', '폐수발생량', '위탁량', '기타']
 sheet_wastewater = get_sheet(doc, 'Wastewater', ww_headers)
 
@@ -606,6 +604,10 @@ elif menu == "영업/출고 관리":
             st.subheader("장바구니")
             if st.session_state['cart']:
                 st.dataframe(pd.DataFrame(st.session_state['cart']), use_container_width=True)
+                
+                # 🔥 [신규] 팔레트당 최대 적재량 입력 (기본 1000kg)
+                max_pallet_kg = st.number_input("📦 팔레트당 최대 적재량 설정 (kg)", min_value=100.0, value=1000.0, step=100.0, help="이 무게를 초과하면 다음 팔레트로 자동 분할됩니다. (예: 1.2톤 = 1200 입력)")
+
                 if st.button("✅ 주문 확정"):
                     oid = "ORD-" + datetime.datetime.now().strftime("%y%m%d%H%M")
                     rows = []
@@ -613,8 +615,12 @@ elif menu == "영업/출고 관리":
                     for it in st.session_state['cart']:
                         rem = it['수량']
                         while rem > 0:
-                            sp = 1000 - cw
-                            if sp <= 0: plt += 1; cw = 0; sp = 1000
+                            # 🔥 [변경] 하드코딩된 1000 대신 입력받은 max_pallet_kg 사용
+                            sp = max_pallet_kg - cw
+                            if sp <= 0: 
+                                plt += 1
+                                cw = 0
+                                sp = max_pallet_kg
                             load = min(rem, sp)
                             rows.append([oid, od_dt.strftime('%Y-%m-%d'), cl_nm, it['코드'], it['품목명'], load, plt, "준비", it['비고'], ""])
                             cw += load; rem -= load
@@ -1195,6 +1201,7 @@ elif menu == "🔍 이력/LOT 검색":
 
 elif menu == "🌊 환경/폐수 일지":
     st.title("🌊 폐수배출시설 운영일지")
+    
     if sheet_wastewater is None:
         st.error("⚠️ 통신 에러로 시트를 만들 수 없습니다. 구글 시트에 접근 권한을 확인해주세요.")
         st.stop()
@@ -1406,7 +1413,6 @@ elif menu == "📋 주간 회의 & 개선사항":
         if not df_meetings.empty:
             df_print = df_meetings.copy()
             
-            # 🔥 [수정] 검색 필터에 '공장' 추가 (4분할)
             with st.expander("🔎 검색 필터 열기", expanded=True):
                 c_f1, c_f2, c_f3, c_f4 = st.columns(4)
                 min_date_m = pd.to_datetime(df_print['작성일'], errors='coerce').min()
@@ -1425,14 +1431,12 @@ elif menu == "📋 주간 회의 & 개선사항":
             
             if sch_assignee != "전체": df_print = df_print[df_print['담당자'] == sch_assignee]
             if sch_status != "전체": df_print = df_print[df_print['상태'] == sch_status]
-            # 🔥 공장 필터 적용
             if sch_fac_m != "전체": df_print = df_print[df_print['공장'] == sch_fac_m]
             
             st.write(f"📋 조회 결과: 총 {len(df_print)}건")
             show_cols = ['작성일', '공장', '안건내용', '담당자', '상태', '비고']
             st.dataframe(df_print[show_cols].sort_values('작성일', ascending=False), use_container_width=True, hide_index=True)
             
-            # 🔥 인쇄 기능 (필터링된 결과만 출력됨)
             html_mtg = f"""
             <h2 style='text-align:center;'>현장 개선사항 및 안건 이력</h2>
             <p style='text-align:right;'>출력일: {datetime.date.today()} / 대상 공장: {sch_fac_m}</p>
