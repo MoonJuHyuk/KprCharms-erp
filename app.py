@@ -296,31 +296,32 @@ if menu == "대시보드":
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                # 🔥 [신규 추가] 원재료 입고 현황 섹션 (생산 추이 바로 아래)
+                # 🔥 [수정 및 강화] 최근 10일치 원재료 입고 리포트
                 st.markdown("---")
-                st.subheader("📥 원재료 입고 현황 (최근 기간)")
+                st.subheader("📥 최근 10일 원재료 입고 리포트")
                 
-                df_inbound = df_logs[df_logs['구분'] == '입고'].copy()
-                if not df_inbound.empty:
-                    df_inbound['날짜_dt'] = pd.to_datetime(df_inbound['날짜']).dt.date
-                    df_in_filtered = df_inbound[(df_inbound['날짜_dt'] >= s_d) & (df_inbound['날짜_dt'] <= e_d)]
+                df_inbound_all = df_logs[df_logs['구분'] == '입고'].copy()
+                if not df_inbound_all.empty:
+                    # 1. 실제 입고가 있었던 날짜들 중 최근 10일 추출
+                    in_dates = sorted(df_inbound_all['날짜'].unique(), reverse=True)[:10]
+                    df_in_10days = df_inbound_all[df_inbound_all['날짜'].isin(in_dates)].copy()
                     
-                    if not df_in_filtered.empty:
-                        # 1. 입고 차트 (품목별 입고량)
-                        in_chart = alt.Chart(df_in_filtered).mark_bar().encode(
-                            x=alt.X('날짜:N', title='입고 날짜', axis=alt.Axis(labelAngle=0)),
+                    if not df_in_10days.empty:
+                        # 차트 (날짜별/품목별 합산)
+                        in_chart = alt.Chart(df_in_10days).mark_bar().encode(
+                            x=alt.X('날짜:N', title='입고일', sort=alt.SortField('날짜', order='descending')),
                             y=alt.Y('sum(수량):Q', title='입고량 (KG)'),
-                            color=alt.Color('품목명:N', title='입고 품목'),
-                            tooltip=['날짜', '품목명', '코드', alt.Tooltip('수량', format=',.0f'), '비고']
+                            color=alt.Color('품목명:N', title='품목명', scale=alt.Scale(scheme='category20')),
+                            tooltip=['날짜', '품목명', alt.Tooltip('sum(수량)', format=',.0f', title='총 입고량')]
                         ).properties(height=300)
                         st.altair_chart(in_chart, use_container_width=True)
                         
-                        # 2. 입고 상세 표
-                        with st.expander("📝 입고 내역 상세 보기", expanded=False):
-                            df_in_table = df_in_filtered[['날짜', '시간', '코드', '품목명', '규격', '수량', '비고']].sort_values(['날짜', '시간'], ascending=False)
-                            st.dataframe(df_in_table, use_container_width=True, hide_index=True)
+                        # 상세 데이터 테이블
+                        st.markdown("##### 📋 상세 입고 내역 (최근 10일)")
+                        df_in_table = df_in_10days[['날짜', '시간', '코드', '품목명', '규격', '수량', '비고']].sort_values(['날짜', '시간'], ascending=False)
+                        st.dataframe(df_in_table, use_container_width=True, hide_index=True)
                     else:
-                        st.info("선택한 기간 내에 원재료 입고 내역이 없습니다.")
+                        st.info("표시할 입고 내역이 없습니다.")
                 else:
                     st.info("입고 데이터가 존재하지 않습니다.")
 
@@ -329,6 +330,7 @@ if menu == "대시보드":
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
+    # (v2.7/3.2 기존 코드 유지)
     with st.sidebar:
         st.markdown("### 📝 작업 입력")
         cat = st.selectbox("구분", ["입고", "생산", "재고실사"])
@@ -556,43 +558,22 @@ elif menu == "재고/생산 관리":
                 df_res_r = df_res_r[df_res_r['코드'].str.contains(sch_txt_r, case=False) | df_res_r['품목명'].str.contains(sch_txt_r, case=False)]
             
             disp_cols_r = ['No', '날짜', '시간', '공장', '코드', '품목명', '규격', '수량', '비고']
-            final_cols_r = [c for c in disp_cols_r if c in df_res_r.columns]
-            st.dataframe(df_res_r[final_cols_r].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
+            st.dataframe(df_res_r[disp_cols_r].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
             
             st.markdown("### 🗑️ 잘못된 입고 기록 삭제")
-            st.caption("삭제하면 해당 수량만큼 재고가 줄어듭니다 (입고 취소).")
-            
-            df_for_select_r = df_res_r.sort_values(['날짜', '시간'], ascending=False)
-            del_opts_r = {row['No']: f"No.{row['No']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_for_select_r.iterrows()}
-            
+            del_opts_r = {row['No']: f"No.{row['No']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_res_r.iterrows()}
             if del_opts_r:
                 sel_del_id_r = st.selectbox("삭제할 기록 선택", list(del_opts_r.keys()), format_func=lambda x: del_opts_r[x], key="sel_del_r")
-                
-                if st.button("❌ 입고 기록 삭제 (재고 차감)", type="primary", key="btn_del_r"):
+                if st.button("❌ 입고 기록 삭제 (재고 차감)", type="primary"):
                     target_row_r = df_receipt_log[df_receipt_log['No'] == sel_del_id_r].iloc[0]
-                    r_fac = target_row_r['공장']
-                    r_code = target_row_r['코드']
-                    r_qty = safe_float(target_row_r['수량'])
-                    
-                    update_inventory(r_fac, r_code, -r_qty)
-                    
-                    try:
-                        sheet_logs.delete_rows(int(sel_del_id_r))
-                        st.success("삭제 완료! 재고가 차감되었습니다.")
-                        time.sleep(1)
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"오류: {e}")
-            else:
-                st.info("삭제할 대상이 없습니다.")
+                    update_inventory(target_row_r['공장'], target_row_r['코드'], -safe_float(target_row_r['수량']))
+                    sheet_logs.delete_rows(int(sel_del_id_r))
+                    st.success("삭제 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
 
     with t3:
         if not df_inventory.empty:
             df_v = df_inventory.copy()
-            if not df_items.empty:
-                cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict()
-                df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
+            if not df_items.empty: cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict(); df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
             c1, c2 = st.columns(2)
             fac_f = c1.radio("공장 (위치 확인용)", ["전체", "1공장", "2공장"], horizontal=True)
             cat_f = c2.radio("품목", ["전체", "제품", "반제품", "원자재"], horizontal=True)
@@ -601,7 +582,6 @@ elif menu == "재고/생산 관리":
                 if cat_f=="제품": df_v = df_v[df_v['구분'].isin(['제품','완제품'])]
                 else: df_v = df_v[df_v['구분']==cat_f]
             st.dataframe(df_v, use_container_width=True)
-
     with t4: st.dataframe(df_logs, use_container_width=True)
     with t5: st.dataframe(df_bom, use_container_width=True)
 
