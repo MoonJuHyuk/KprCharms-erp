@@ -293,14 +293,42 @@ if menu == "대시보드":
                     color=alt.Color('Category', scale=alt.Scale(domain=domain, range=range_), title='제품군'),
                     xOffset='Category',
                     tooltip=['표시날짜', 'Category', alt.Tooltip('수량', format=',.0f')]
-                ).properties(height=400)
+                ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
+
+                # 🔥 [신규 추가] 원재료 입고 현황 섹션 (생산 추이 바로 아래)
+                st.markdown("---")
+                st.subheader("📥 원재료 입고 현황 (최근 기간)")
+                
+                df_inbound = df_logs[df_logs['구분'] == '입고'].copy()
+                if not df_inbound.empty:
+                    df_inbound['날짜_dt'] = pd.to_datetime(df_inbound['날짜']).dt.date
+                    df_in_filtered = df_inbound[(df_inbound['날짜_dt'] >= s_d) & (df_inbound['날짜_dt'] <= e_d)]
+                    
+                    if not df_in_filtered.empty:
+                        # 1. 입고 차트 (품목별 입고량)
+                        in_chart = alt.Chart(df_in_filtered).mark_bar().encode(
+                            x=alt.X('날짜:N', title='입고 날짜', axis=alt.Axis(labelAngle=0)),
+                            y=alt.Y('sum(수량):Q', title='입고량 (KG)'),
+                            color=alt.Color('품목명:N', title='입고 품목'),
+                            tooltip=['날짜', '품목명', '코드', alt.Tooltip('수량', format=',.0f'), '비고']
+                        ).properties(height=300)
+                        st.altair_chart(in_chart, use_container_width=True)
+                        
+                        # 2. 입고 상세 표
+                        with st.expander("📝 입고 내역 상세 보기", expanded=False):
+                            df_in_table = df_in_filtered[['날짜', '시간', '코드', '품목명', '규격', '수량', '비고']].sort_values(['날짜', '시간'], ascending=False)
+                            st.dataframe(df_in_table, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("선택한 기간 내에 원재료 입고 내역이 없습니다.")
+                else:
+                    st.info("입고 데이터가 존재하지 않습니다.")
+
             else: st.info("기간을 선택해주세요.")
     else: st.info("데이터를 불러오는 중입니다...")
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
-    # (v2.7의 입고 이력 탭 기능 포함 코드 생략/유지)
     with st.sidebar:
         st.markdown("### 📝 작업 입력")
         cat = st.selectbox("구분", ["입고", "생산", "재고실사"])
@@ -407,10 +435,10 @@ elif menu == "재고/생산 관리":
             with st.expander("🔎 검색 필터", expanded=True):
                 c_s1, c_s2, c_s3, c_s4 = st.columns(4)
                 min_dt = pd.to_datetime(df_prod_log['날짜']).min().date() if not df_prod_log.empty else datetime.date.today()
-                sch_date = c_s1.date_input("날짜 범위", [min_dt, datetime.date.today()])
+                sch_date = c_s1.date_input("날짜 범위", [min_dt, datetime.date.today()], key="p_date")
                 all_lines = ["전체"] + sorted(df_prod_log['라인'].unique().tolist())
                 sch_line = c_s2.selectbox("라인 선택", all_lines)
-                sch_code = c_s3.text_input("품목 코드/명 검색")
+                sch_code = c_s3.text_input("품목 코드/명 검색", key="p_txt")
                 sch_fac = c_s4.selectbox("공장 필터", ["전체", "1공장", "2공장"])
 
             df_res = df_prod_log.copy()
@@ -433,76 +461,77 @@ elif menu == "재고/생산 관리":
             st.markdown("### 🛠️ 기록 수정 및 삭제")
             df_for_select = df_res.sort_values(['날짜', '시간'], ascending=False)
             delete_options = {row['No']: f"No.{row['No']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_for_select.iterrows()}
-            sel_target_id = st.selectbox("관리할 기록 선택", list(delete_options.keys()), format_func=lambda x: delete_options[x])
-            
-            col_act1, col_act2 = st.columns(2)
-            
-            with col_act1:
-                if st.button("🗑️ 선택한 기록 삭제 (자동 반제품 복구)", type="primary"):
-                    target_row = df_prod_log[df_prod_log['No'] == sel_target_id].iloc[0]
-                    del_date = target_row['날짜']; del_time = target_row['시간']; del_fac = target_row['공장']; del_code = target_row['코드']; del_qty = safe_float(target_row['수량'])
-                    update_inventory(del_fac, del_code, -del_qty)
-                    linked_logs = df_logs[(df_logs['날짜'] == del_date) & (df_logs['시간'] == del_time) & (df_logs['구분'] == '사용(Auto)') & (df_logs['비고'].str.contains(str(del_code), na=False))]
-                    rows_to_delete = [sel_target_id]
-                    if not linked_logs.empty:
-                        for idx, row in linked_logs.iterrows():
-                            mat_qty = safe_float(row['수량'])
-                            update_inventory(del_fac, row['코드'], -mat_qty)
-                            rows_to_delete.append(idx + 2)
-                    rows_to_delete.sort(reverse=True)
-                    try:
-                        for r_idx in rows_to_delete:
-                            sheet_logs.delete_rows(int(r_idx))
-                            time.sleep(0.5)
-                        st.success("삭제 및 복구 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
-                    except Exception as e: st.error(f"오류: {e}")
-
-            with col_act2:
-                if "edit_mode" not in st.session_state: st.session_state["edit_mode"] = False
-                if st.button("✏️ 선택한 기록 수정하기"):
-                    st.session_state["edit_mode"] = True
-            
-            if st.session_state["edit_mode"]:
-                st.info("💡 수정하면 기존 기록은 삭제되고, 새로운 내용으로 다시 등록됩니다. (반제품 재고 자동 계산)")
-                target_row_edit = df_prod_log[df_prod_log['No'] == sel_target_id].iloc[0]
-                with st.form("edit_form"):
-                    e_date = st.date_input("날짜", pd.to_datetime(target_row_edit['날짜']))
-                    e_line = st.selectbox("라인", all_lines, index=all_lines.index(target_row_edit['라인']) if target_row_edit['라인'] in all_lines else 0)
-                    e_qty = st.number_input("수량 (kg)", value=float(target_row_edit['수량']))
-                    e_note = st.text_input("비고", value=target_row_edit['비고'])
-                    
-                    if st.form_submit_button("✅ 수정사항 저장"):
-                        old_date = target_row_edit['날짜']; old_time = target_row_edit['시간']; old_fac = target_row_edit['공장']; old_code = target_row_edit['코드']; old_qty = safe_float(target_row_edit['수량'])
-                        update_inventory(old_fac, old_code, -old_qty)
-                        
-                        linked_logs_old = df_logs[(df_logs['날짜'] == old_date) & (df_logs['시간'] == old_time) & (df_logs['구분'] == '사용(Auto)') & (df_logs['비고'].str.contains(str(old_code), na=False))]
-                        rows_to_del_edit = [sel_target_id]
-                        if not linked_logs_old.empty:
-                            for idx, row in linked_logs_old.iterrows():
+            if delete_options:
+                sel_target_id = st.selectbox("관리할 기록 선택", list(delete_options.keys()), format_func=lambda x: delete_options[x])
+                
+                col_act1, col_act2 = st.columns(2)
+                
+                with col_act1:
+                    if st.button("🗑️ 선택한 기록 삭제 (자동 반제품 복구)", type="primary"):
+                        target_row = df_prod_log[df_prod_log['No'] == sel_target_id].iloc[0]
+                        del_date = target_row['날짜']; del_time = target_row['시간']; del_fac = target_row['공장']; del_code = target_row['코드']; del_qty = safe_float(target_row['수량'])
+                        update_inventory(del_fac, del_code, -del_qty)
+                        linked_logs = df_logs[(df_logs['날짜'] == del_date) & (df_logs['시간'] == del_time) & (df_logs['구분'] == '사용(Auto)') & (df_logs['비고'].str.contains(str(del_code), na=False))]
+                        rows_to_delete = [sel_target_id]
+                        if not linked_logs.empty:
+                            for idx, row in linked_logs.iterrows():
                                 mat_qty = safe_float(row['수량'])
-                                update_inventory(old_fac, row['코드'], -mat_qty)
-                                rows_to_del_edit.append(idx + 2)
-                        rows_to_del_edit.sort(reverse=True)
-                        for r_idx in rows_to_del_edit:
-                            sheet_logs.delete_rows(int(r_idx))
-                            time.sleep(0.3)
+                                update_inventory(del_fac, row['코드'], -mat_qty)
+                                rows_to_delete.append(idx + 2)
+                        rows_to_delete.sort(reverse=True)
+                        try:
+                            for r_idx in rows_to_delete:
+                                sheet_logs.delete_rows(int(r_idx))
+                                time.sleep(0.5)
+                            st.success("삭제 및 복구 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
+                        except Exception as e: st.error(f"오류: {e}")
+
+                with col_act2:
+                    if "edit_mode" not in st.session_state: st.session_state["edit_mode"] = False
+                    if st.button("✏️ 선택한 기록 수정하기"):
+                        st.session_state["edit_mode"] = True
+                
+                if st.session_state["edit_mode"]:
+                    st.info("💡 수정하면 기존 기록은 삭제되고, 새로운 내용으로 다시 등록됩니다. (반제품 재고 자동 계산)")
+                    target_row_edit = df_prod_log[df_prod_log['No'] == sel_target_id].iloc[0]
+                    with st.form("edit_form"):
+                        e_date = st.date_input("날짜", pd.to_datetime(target_row_edit['날짜']))
+                        e_line = st.selectbox("라인", all_lines, index=all_lines.index(target_row_edit['라인']) if target_row_edit['라인'] in all_lines else 0)
+                        e_qty = st.number_input("수량 (kg)", value=float(target_row_edit['수량']))
+                        e_note = st.text_input("비고", value=target_row_edit['비고'])
                         
-                        new_time_str = datetime.datetime.now().strftime("%H:%M:%S") 
-                        sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "생산", old_code, target_row_edit['품목명'], target_row_edit.get('규격',''), target_row_edit['타입'], target_row_edit.get('색상',''), e_qty, e_note, "-", e_line])
-                        update_inventory(old_fac, old_code, e_qty)
-                        
-                        if not df_bom.empty:
-                            sel_type = target_row_edit['타입']
-                            if '타입' in df_bom.columns: bom_targets = df_bom[(df_bom['제품코드'].astype(str) == str(old_code)) & (df_bom['타입'].astype(str) == str(sel_type))].drop_duplicates(subset=['자재코드'])
-                            else: bom_targets = df_bom[df_bom['제품코드'].astype(str) == str(old_code)].drop_duplicates(subset=['자재코드'])
-                            for i,r in bom_targets.iterrows():
-                                req = e_qty * safe_float(r['소요량'])
-                                update_inventory(old_fac, r['자재코드'], -req)
+                        if st.form_submit_button("✅ 수정사항 저장"):
+                            old_date = target_row_edit['날짜']; old_time = target_row_edit['시간']; old_fac = target_row_edit['공장']; old_code = target_row_edit['코드']; old_qty = safe_float(target_row_edit['수량'])
+                            update_inventory(old_fac, old_code, -old_qty)
+                            
+                            linked_logs_old = df_logs[(df_logs['날짜'] == old_date) & (df_logs['시간'] == old_time) & (df_logs['구분'] == '사용(Auto)') & (df_logs['비고'].str.contains(str(old_code), na=False))]
+                            rows_to_del_edit = [sel_target_id]
+                            if not linked_logs_old.empty:
+                                for idx, row in linked_logs_old.iterrows():
+                                    mat_qty = safe_float(row['수량'])
+                                    update_inventory(old_fac, row['코드'], -mat_qty)
+                                    rows_to_del_edit.append(idx + 2)
+                            rows_to_del_edit.sort(reverse=True)
+                            for r_idx in rows_to_del_edit:
+                                sheet_logs.delete_rows(int(r_idx))
                                 time.sleep(0.3)
-                                sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{old_code} 생산", "-", e_line])
-                        
-                        st.session_state["edit_mode"] = False
-                        st.success("수정 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
+                            
+                            new_time_str = datetime.datetime.now().strftime("%H:%M:%S") 
+                            sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "생산", old_code, target_row_edit['품목명'], target_row_edit.get('규격',''), target_row_edit['타입'], target_row_edit.get('색상',''), e_qty, e_note, "-", e_line])
+                            update_inventory(old_fac, old_code, e_qty)
+                            
+                            if not df_bom.empty:
+                                sel_type = target_row_edit['타입']
+                                if '타입' in df_bom.columns: bom_targets = df_bom[(df_bom['제품코드'].astype(str) == str(old_code)) & (df_bom['타입'].astype(str) == str(sel_type))].drop_duplicates(subset=['자재코드'])
+                                else: bom_targets = df_bom[df_bom['제품코드'].astype(str) == str(old_code)].drop_duplicates(subset=['자재코드'])
+                                for i,r in bom_targets.iterrows():
+                                    req = e_qty * safe_float(r['소요량'])
+                                    update_inventory(old_fac, r['자재코드'], -req)
+                                    time.sleep(0.3)
+                                    sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{old_code} 생산", "-", e_line])
+                            
+                            st.session_state["edit_mode"] = False
+                            st.success("수정 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
 
     with t2:
         st.subheader("📥 원자재 입고 이력 조회 및 취소")
@@ -510,34 +539,60 @@ elif menu == "재고/생산 관리":
         else:
             df_receipt_log = df_logs[df_logs['구분'] == '입고'].copy()
             df_receipt_log['No'] = df_receipt_log.index + 2
+            
             with st.expander("🔎 입고 내역 검색", expanded=True):
                 c_r1, c_r2 = st.columns(2)
                 min_dt_r = pd.to_datetime(df_receipt_log['날짜']).min().date() if not df_receipt_log.empty else datetime.date.today()
                 sch_date_r = c_r1.date_input("날짜 범위", [min_dt_r, datetime.date.today()], key="r_date")
                 sch_txt_r = c_r2.text_input("품목 검색", key="r_txt")
+                
             df_res_r = df_receipt_log.copy()
             if len(sch_date_r) == 2:
                 s_d, e_d = sch_date_r
                 df_res_r['날짜'] = pd.to_datetime(df_res_r['날짜'])
                 df_res_r = df_res_r[(df_res_r['날짜'].dt.date >= s_d) & (df_res_r['날짜'].dt.date <= e_d)]
                 df_res_r['날짜'] = df_res_r['날짜'].dt.strftime('%Y-%m-%d')
-            if sch_txt_r: df_res_r = df_res_r[df_res_r['코드'].str.contains(sch_txt_r, case=False) | df_res_r['품목명'].str.contains(sch_txt_r, case=False)]
+            if sch_txt_r:
+                df_res_r = df_res_r[df_res_r['코드'].str.contains(sch_txt_r, case=False) | df_res_r['품목명'].str.contains(sch_txt_r, case=False)]
+            
             disp_cols_r = ['No', '날짜', '시간', '공장', '코드', '품목명', '규격', '수량', '비고']
-            st.dataframe(df_res_r[disp_cols_r].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
+            final_cols_r = [c for c in disp_cols_r if c in df_res_r.columns]
+            st.dataframe(df_res_r[final_cols_r].sort_values(['날짜', '시간'], ascending=False), use_container_width=True, hide_index=True)
+            
             st.markdown("### 🗑️ 잘못된 입고 기록 삭제")
-            del_opts_r = {row['No']: f"No.{row['No']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_res_r.iterrows()}
+            st.caption("삭제하면 해당 수량만큼 재고가 줄어듭니다 (입고 취소).")
+            
+            df_for_select_r = df_res_r.sort_values(['날짜', '시간'], ascending=False)
+            del_opts_r = {row['No']: f"No.{row['No']} | {row['날짜']} {row['품목명']} ({row['수량']}kg)" for _, row in df_for_select_r.iterrows()}
+            
             if del_opts_r:
                 sel_del_id_r = st.selectbox("삭제할 기록 선택", list(del_opts_r.keys()), format_func=lambda x: del_opts_r[x], key="sel_del_r")
-                if st.button("❌ 입고 기록 삭제 (재고 차감)", type="primary"):
+                
+                if st.button("❌ 입고 기록 삭제 (재고 차감)", type="primary", key="btn_del_r"):
                     target_row_r = df_receipt_log[df_receipt_log['No'] == sel_del_id_r].iloc[0]
-                    update_inventory(target_row_r['공장'], target_row_r['코드'], -safe_float(target_row_r['수량']))
-                    sheet_logs.delete_rows(int(sel_del_id_r))
-                    st.success("삭제 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
+                    r_fac = target_row_r['공장']
+                    r_code = target_row_r['코드']
+                    r_qty = safe_float(target_row_r['수량'])
+                    
+                    update_inventory(r_fac, r_code, -r_qty)
+                    
+                    try:
+                        sheet_logs.delete_rows(int(sel_del_id_r))
+                        st.success("삭제 완료! 재고가 차감되었습니다.")
+                        time.sleep(1)
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"오류: {e}")
+            else:
+                st.info("삭제할 대상이 없습니다.")
 
     with t3:
         if not df_inventory.empty:
             df_v = df_inventory.copy()
-            if not df_items.empty: cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict(); df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
+            if not df_items.empty:
+                cmap = df_items.drop_duplicates('코드').set_index('코드')['구분'].to_dict()
+                df_v['구분'] = df_v['코드'].map(cmap).fillna('-')
             c1, c2 = st.columns(2)
             fac_f = c1.radio("공장 (위치 확인용)", ["전체", "1공장", "2공장"], horizontal=True)
             cat_f = c2.radio("품목", ["전체", "제품", "반제품", "원자재"], horizontal=True)
@@ -546,6 +601,7 @@ elif menu == "재고/생산 관리":
                 if cat_f=="제품": df_v = df_v[df_v['구분'].isin(['제품','완제품'])]
                 else: df_v = df_v[df_v['구분']==cat_f]
             st.dataframe(df_v, use_container_width=True)
+
     with t4: st.dataframe(df_logs, use_container_width=True)
     with t5: st.dataframe(df_bom, use_container_width=True)
 
@@ -607,6 +663,7 @@ elif menu == "영업/출고 관리":
 
     with tab_p:
         st.subheader("✏️ 팔레트 수정 및 일괄 재구성")
+        st.info("💡 여기서는 자동 배당되지 않습니다. 입력한 수량과 팔레트 번호 그대로 저장됩니다.")
         if not df_orders.empty and '상태' in df_orders.columns:
             pend = df_orders[df_orders['상태']=='준비']
             if not pend.empty:
@@ -622,15 +679,12 @@ elif menu == "영업/출고 관리":
                 st.write("▼ 현재 팔레트 구성")
                 st.dataframe(display_df[['팔레트번호', '코드', '품목명', '수량', '비고']], use_container_width=True, hide_index=True)
                 
-                # 🔥 [신규] 팔레트 일괄 재구성 섹션
                 with st.expander("📦 팔레트 적재량 기준으로 일괄 재구성 (Re-Split)", expanded=False):
                     st.warning("⚠️ 실행 시 기존의 팔레트 번호와 수량이 입력하신 기준에 맞춰 자동으로 다시 계산됩니다.")
                     new_max_kg = st.number_input("새로운 팔레트당 적재량 (kg)", min_value=100.0, value=1200.0, step=100.0, key="resplit_kg")
                     if st.button("🚀 재구성 실행"):
                         with st.spinner("팔레트 재계산 중..."):
-                            # 1. 동일 품목(코드+비고) 합산
                             combined = original_df.groupby(['코드', '품목명', '비고', '타입'])['수량'].sum().reset_index()
-                            # 2. 재분할 알고리즘
                             new_rows_data = []
                             plt_cnt = 1; current_w = 0
                             for _, r in combined.iterrows():
@@ -641,11 +695,8 @@ elif menu == "영업/출고 관리":
                                     load = min(rem, space)
                                     new_rows_data.append([tgt, original_df.iloc[0]['날짜'], original_df.iloc[0]['거래처'], r['코드'], r['품목명'], load, plt_cnt, "준비", r['비고'], "", r['타입']])
                                     current_w += load; rem -= load
-                            
-                            # 3. 시트 업데이트
                             all_records = sheet_orders.get_all_records()
                             headers = sheet_orders.row_values(1)
-                            # 기존 주문 삭제 후 새 데이터 추가
                             filtered_records = [r for r in all_records if str(r['주문번호']) != str(tgt)]
                             new_final_values = [headers] + [[r.get(h, "") for h in headers] for r in filtered_records] + new_rows_data
                             sheet_orders.clear(); sheet_orders.update(new_final_values)
@@ -684,7 +735,6 @@ elif menu == "영업/출고 관리":
                             sheet_orders.clear(); sheet_orders.update([headers] + updated)
                             st.success("수정됨"); st.cache_data.clear(); st.rerun()
 
-    # (인쇄, 출고 확정 등 하위 탭 생략/기존 유지)
     with tab_prt:
         st.subheader("🖨️ Packing List & Labels")
         if not df_orders.empty and '상태' in df_orders.columns:
@@ -752,9 +802,7 @@ elif menu == "영업/출고 관리":
                     upd = [hd] + [[r.get(h, "") if r['주문번호']!=tgt_out else (r['상태'] if h!='상태' else '완료') for h in hd] for r in all_rec]
                     sheet_orders.clear(); sheet_orders.update(upd); st.success("출고 완료"); st.cache_data.clear(); st.rerun()
 
-# [기타 메뉴 생략/기존 유지]
 elif menu == "🌊 환경/폐수 일지":
-    # (v2.9 공란 로직 포함 코드 유지)
     st.title("🌊 폐수배출시설 운영일지")
     tab_w1, tab_w2 = st.tabs(["📅 운영일지 작성", "📋 이력 조회"])
     with tab_w1:
@@ -788,7 +836,6 @@ elif menu == "🌊 환경/폐수 일지":
                 st.success("저장됨"); st.cache_data.clear(); st.rerun()
 
 elif menu == "📋 주간 회의 & 개선사항":
-    # (v3.3 공장별 필터 로직 유지)
     st.title("📋 현장 주간 회의 및 개선사항 관리")
     tab_m1, tab_m2, tab_m3 = st.tabs(["🚀 진행 중인 안건", "➕ 신규 안건 등록", "🔍 안건 이력 및 인쇄"])
     with tab_m1:
@@ -797,13 +844,15 @@ elif menu == "📋 주간 회의 & 개선사항":
         if mtg_fac_filter != "전체": df_open = df_open[df_open['공장'] == mtg_fac_filter]
         if not df_open.empty:
             df_open['Real_Index'] = range(len(df_open))
-            edited = st.data_editor(df_open.drop(columns=['Real_Index']), use_container_width=True, hide_index=True)
+            edited = st.data_editor(df_open, use_container_width=True, hide_index=True)
             if st.button("💾 변경사항 저장"):
                 all_rec = sheet_meetings.get_all_records(); hd = sheet_meetings.row_values(1)
-                new_all = [hd] + [[r.get(h, "") for h in hd] for r in all_rec] # 실제론 매칭 로직 필요하지만 단순화
+                new_all = [hd] + [[r.get(h, "") for h in hd] for r in all_rec]
                 sheet_meetings.clear(); sheet_meetings.update(new_all); st.success("저장됨"); st.cache_data.clear(); st.rerun()
     with tab_m2:
         with st.form("new_mtg"):
             n_date = st.date_input("날짜"); n_fac = st.selectbox("공장", ["1공장", "2공장", "공통"]); n_con = st.text_area("내용"); n_as = st.text_input("담당자")
             if st.form_submit_button("등록"):
                 sheet_meetings.append_row([f"M-{int(time.time())}", n_date.strftime('%Y-%m-%d'), n_fac, n_con, n_as, "진행중", ""]); st.success("등록됨"); st.cache_data.clear(); st.rerun()
+    with tab_m3:
+        st.dataframe(df_meetings, use_container_width=True)
