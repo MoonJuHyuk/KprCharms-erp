@@ -656,9 +656,6 @@ elif menu == "영업/출고 관리":
                 with c_mod1:
                     st.markdown("#### ➕ 품목 추가")
                     with st.form("add_form"):
-                        st.write("df_items columns:", list(df_items.columns))
-                        st.write(df_items.head())
-                        st.stop()
                         new_code = st.selectbox("제품 코드", df_items['코드'].unique())
                         new_qty = st.number_input("수량(kg)", min_value=0.0, step=10.0)
                         new_plt = st.number_input("팔레트 번호", value=int(display_df['팔레트번호'].max()))
@@ -810,4 +807,3 @@ elif menu == "📋 주간 회의 & 개선사항":
             n_date = st.date_input("날짜"); n_fac = st.selectbox("공장", ["1공장", "2공장", "공통"]); n_con = st.text_area("내용"); n_as = st.text_input("담당자")
             if st.form_submit_button("등록"):
                 sheet_meetings.append_row([f"M-{int(time.time())}", n_date.strftime('%Y-%m-%d'), n_fac, n_con, n_as, "진행중", ""]); st.success("등록됨"); st.cache_data.clear(); st.rerun()
-
