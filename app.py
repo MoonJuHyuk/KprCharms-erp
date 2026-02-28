@@ -11,7 +11,20 @@ import numpy as np
 import io
 import random
 
-# --- 0. 아이콘 설정 함수 ---
+# --- 0. 도움 함수 정의 (에러 방지를 위해 최상단 배치) ---
+
+def get_product_category(row):
+    """대시보드 분류를 위한 제품군 판별 함수"""
+    name = str(row['품목명']).upper()
+    code = str(row['코드']).upper()
+    gubun = str(row.get('구분', '')).strip()
+    if 'CP' in name or 'COMPOUND' in name or 'CP' in code: return "Compound"
+    if ('KA' in name or 'KA' in code) and (gubun == '반제품' or name.endswith('반') or '반' in name): return "KA반제품"
+    if 'KA' in name or 'KA' in code: return "KA"
+    if 'KG' in name or 'KG' in code: return "KG"
+    if gubun == '반제품' or name.endswith('반'): return "반제품(기타)"
+    return "기타"
+
 def add_apple_touch_icon(image_path):
     try:
         if os.path.exists(image_path):
@@ -29,7 +42,7 @@ def add_apple_touch_icon(image_path):
                     """,
                     unsafe_allow_html=True
                 )
-    except Exception as e: pass
+    except: pass
 
 # --- 1. 페이지 설정 ---
 if os.path.exists("logo.png"):
@@ -38,7 +51,7 @@ if os.path.exists("logo.png"):
 else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
-# --- 2. 구글 시트 연결 ---
+# --- 2. 구글 시트 연결 및 자동 생성 기능 ---
 @st.cache_resource
 def get_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -49,7 +62,7 @@ def get_connection():
             creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
             client = gspread.authorize(creds)
             return client.open_by_key(spreadsheet_id)
-    except Exception: pass
+    except: pass
     key_file = 'key.json'
     if os.path.exists(key_file):
         creds = Credentials.from_service_account_file(key_file, scopes=scopes)
@@ -61,15 +74,12 @@ doc = get_connection()
 
 def get_sheet(doc, name, create_headers=None):
     if doc is None: return None
-    try:
-        return doc.worksheet(name)
+    try: return doc.worksheet(name)
     except:
         if create_headers:
-            try:
-                ws = doc.add_worksheet(title=name, rows="2000", cols="20")
-                ws.append_row(create_headers)
-                return ws
-            except: return None
+            ws = doc.add_worksheet(title=name, rows="2000", cols="20")
+            ws.append_row(create_headers)
+            return ws
         return None
 
 sheet_items = get_sheet(doc, 'Items')
@@ -117,7 +127,6 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# --- 4. 재고 업데이트 ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
@@ -133,20 +142,6 @@ def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_c
         else:
             sheet_inventory.append_row([factory, code, p_name, p_spec, p_type, p_color, qty])
     except: pass
-
-# --- 5. 헬퍼 함수 ---
-def get_shape(code, df_items):
-    shape = "-"
-    if not df_items.empty:
-        item_row = df_items[df_items['코드'].astype(str) == str(code)]
-        if not item_row.empty:
-            korean_type = str(item_row.iloc[0].get('타입', '-'))
-            if "원통" in korean_type: shape = "CYLINDRIC"
-            elif "큐빅" in korean_type: shape = "CUBICAL"
-            elif "펠렛" in korean_type: shape = "PELLET"
-            elif "파우더" in korean_type: shape = "POWDER"
-            else: shape = korean_type
-    return shape
 
 def create_print_button(html_content, title="Print", orientation="portrait"):
     safe_content = html_content.replace('`', '\`').replace('$', '\$')
@@ -166,7 +161,7 @@ def create_print_button(html_content, title="Print", orientation="portrait"):
     <button onclick="print_{title.replace(" ", "_")}()" style="background-color: #4CAF50; border: none; color: white; padding: 10px 20px; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 5px;">🖨️ {title} 인쇄하기</button>"""
     return js_code
 
-# --- 6. 로그인 및 데이터 로드 ---
+# --- 4. 메인 인증 로직 ---
 if "authenticated" not in st.session_state: st.session_state["authenticated"] = False
 if not st.session_state["authenticated"]:
     st.title("🔒 KPR ERP 시스템")
@@ -180,7 +175,7 @@ if not st.session_state["authenticated"]:
 df_items, df_inventory, df_logs, df_bom, df_orders, df_wastewater, df_meetings, df_mapping = load_data()
 if 'cart' not in st.session_state: st.session_state['cart'] = []
 
-# --- 7. 사이드바 ---
+# --- 5. 사이드바 ---
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     else: st.header("🏭 KPR / Chamstek")
@@ -194,10 +189,8 @@ with st.sidebar:
 if menu == "대시보드":
     st.title("📊 공장 현황 대시보드")
     if not df_logs.empty:
-        # 최근 생산일 찾기
-        today = datetime.date.today()
         prod_dates = sorted(df_logs[df_logs['구분'] == '생산']['날짜'].unique(), reverse=True)
-        target_date_str = prod_dates[0] if prod_dates else (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        target_date_str = prod_dates[0] if prod_dates else datetime.date.today().strftime("%Y-%m-%d")
         
         df_target_day = df_logs[df_logs['날짜'] == target_date_str]
         prod_data = df_target_day[df_target_day['구분']=='생산'].copy()
@@ -221,31 +214,39 @@ if menu == "대시보드":
         st.markdown("---")
         st.subheader("📈 생산 추이 분석")
         c_filter1, c_filter2 = st.columns([2, 1])
-        target_dt_obj = pd.to_datetime(target_date_str).date()
-        search_range = c_filter1.date_input("조회 기간 설정", [target_dt_obj - datetime.timedelta(days=6), target_dt_obj])
-        filter_opt = c_filter2.selectbox("제품군 필터", ["전체", "KA", "KG", "KA반제품", "Compound"])
+        t_dt = pd.to_datetime(target_date_str).date()
+        search_range = c_filter1.date_input("조회 기간", [t_dt - datetime.timedelta(days=6), t_dt])
+        filter_opt = c_filter2.selectbox("제품군", ["전체", "KA", "KG", "KA반제품", "Compound"])
         
         if len(search_range) == 2:
-            s_d, e_d = search_range
-            df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
-            df_prod_log['Category'] = df_prod_log.apply(get_product_category, axis=1)
-            if filter_opt != "전체": df_prod_log = df_prod_log[df_prod_log['Category'] == filter_opt]
+            df_p_log = df_logs[df_logs['구분'] == '생산'].copy()
+            df_p_log['Category'] = df_p_log.apply(get_product_category, axis=1)
+            if filter_opt != "전체": df_p_log = df_p_log[df_p_log['Category'] == filter_opt]
             
-            # 🔥 [수정] 대시보드 그래프 복구 (xOffset 추가로 나란히 보기 구현)
-            chart = alt.Chart(df_prod_log).mark_bar().encode(
+            # 🔥 그래프 복구: xOffset으로 막대 분리
+            chart = alt.Chart(df_p_log).mark_bar().encode(
                 x=alt.X('날짜:N', title='날짜'),
                 y=alt.Y('sum(수량):Q', title='생산량 (KG)'),
                 color=alt.Color('Category:N', title='제품군'),
-                xOffset='Category:N', # 🔥 이 줄이 막대를 쪼개줍니다
+                xOffset='Category:N',
                 tooltip=['날짜', 'Category', alt.Tooltip('sum(수량)', format=',.0f')]
             ).properties(height=350)
             st.altair_chart(chart, use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("📥 최근 원재료 입고 현황")
+            df_in_all = df_logs[df_logs['구분'] == '입고'].copy()
+            if not df_in_all.empty:
+                in_dates = sorted(df_in_all['날짜'].unique(), reverse=True)[:10]
+                df_in_10 = df_in_all[df_in_all['날짜'].isin(in_dates)]
+                st.dataframe(df_in_10[['날짜', '코드', '품목명', '수량', '비고']].sort_values('날짜', ascending=False), use_container_width=True, hide_index=True)
 
 # [1] 재고/생산 관리
 elif menu == "재고/생산 관리":
     with st.sidebar:
         st.markdown("### 📝 작업 입력")
         cat = st.selectbox("구분", ["입고", "생산", "재고실사"])
+        # 입력 폼 생략 (기존 로직 유지)
         item_info = None; sel_code = None
         if not df_items.empty:
             df_f = df_items.copy()
@@ -277,15 +278,17 @@ elif menu == "재고/생산 관리":
         if not df_r.empty:
             df_r['Row'] = df_r.index + 2
             sel_del = st.selectbox("취소할 입고 선택", df_r['Row'].tolist(), format_func=lambda x: f"No.{x} | {df_r.loc[x-2, '품목명']} ({df_r.loc[x-2, '수량']}kg)")
-            if st.button("❌ 입고 취소 실행"):
+            if st.button("❌ 선택 입고 취소", type="primary"):
                 target = df_r[df_r['Row']==sel_del].iloc[0]
                 update_inventory(target['공장'], target['코드'], -safe_float(target['수량']))
                 sheet_logs.delete_rows(int(sel_del))
-                st.success("취소됨"); st.cache_data.clear(); st.rerun()
+                st.success("취소 완료"); st.cache_data.clear(); st.rerun()
     with t3:
         st.dataframe(df_inventory, use_container_width=True)
-    with t4: st.dataframe(df_logs, use_container_width=True)
-    with t5: st.dataframe(df_bom, use_container_width=True)
+    with t4:
+        st.dataframe(df_logs, use_container_width=True)
+    with t5:
+        st.dataframe(df_bom, use_container_width=True)
 
 # [2] 영업/출고 관리
 elif menu == "영업/출고 관리":
@@ -305,14 +308,14 @@ elif menu == "영업/출고 관리":
         with c2:
             st.subheader("🛒 장바구니")
             for i, item in enumerate(st.session_state['cart']):
-                cols = st.columns([3, 1])
+                cols = st.columns([4, 1])
                 cols[0].write(f"{item['품목명']} - {item['수량']:,}kg")
                 if cols[1].button("❌", key=f"cart_del_{i}"):
                     st.session_state['cart'].pop(i); st.rerun()
             
             if st.session_state['cart']:
                 max_p = st.number_input("팔레트당 적재량(kg)", value=1000.0)
-                if st.button("✅ 주문 확정", type="primary"):
+                if st.button("✅ 최종 주문 확정", type="primary"):
                     oid = f"ORD-{int(time.time())}"
                     for it in st.session_state['cart']:
                         rem = it['수량']; plt = 1
@@ -331,7 +334,7 @@ elif menu == "영업/출고 관리":
                 st.write("현재 구성")
                 st.dataframe(df_ord[['팔레트번호', '품목명', '수량']], use_container_width=True, hide_index=True)
                 
-                with st.expander("📦 팔레트 일괄 재구성"):
+                with st.expander("📦 팔레트 일괄 재구성 (Re-Split)"):
                     new_limit = st.number_input("새 적재량(kg)", value=1200.0)
                     if st.button("🚀 재구성 실행"):
                         total_q = df_ord['수량'].sum(); it_main = df_ord.iloc[0]
@@ -346,7 +349,7 @@ elif menu == "영업/출고 관리":
                         sheet_orders.clear(); sheet_orders.update([hd] + [[r.get(h,"") for h in hd] for r in filtered] + new_rows)
                         st.success("재구성 완료!"); st.cache_data.clear(); st.rerun()
 
-# 🔥 [수정] 환경/폐수 일지 - 수정 저장 및 이력 삭제 완벽 반영
+# [5] 환경/폐수 일지
 elif menu == "🌊 환경/폐수 일지":
     st.title("🌊 폐수배출시설 운영일지")
     tab_w1, tab_w2 = st.tabs(["📅 일지 작성", "📋 이력 조회 및 삭제"])
@@ -358,12 +361,13 @@ elif menu == "🌊 환경/폐수 일지":
         
         if st.button("📋 실적 기반 일지 작성"):
             days = pd.date_range(start=f"{s_y}-{s_m}-01", end=pd.to_datetime(f"{s_y}-{s_m}-01") + pd.offsets.MonthEnd(0))
-            weekday_map = {0:'월요일', 1:'화요일', 2:'수요일', 3:'목요일', 4:'금요일', 5:'토요일', 6:'일요일'}
+            # 🔥 요일 한글 맵핑
+            wk_map = {0:'월요일', 1:'화요일', 2:'수요일', 3:'목요일', 4:'금요일', 5:'토요일', 6:'일요일'}
             rows = []
             for d in days:
-                d_str = d.strftime('%Y-%m-%d'); kor_day = weekday_map[d.weekday()]
+                d_str = d.strftime('%Y-%m-%d'); k_day = wk_map[d.weekday()]
                 prod = df_logs[(df_logs['날짜']==d_str) & (df_logs['공장']=='1공장') & (df_logs['구분']=='생산')]
-                row = {"날짜": f"{d_str} {kor_day}", "대표자": "문성인", "환경기술인": "문주혁"}
+                row = {"날짜": f"{d_str} {k_day}", "대표자": "문성인", "환경기술인": "문주혁"}
                 if not prod.empty:
                     q = prod['수량'].sum()
                     tm = "08:00~15:00" if d.weekday() == 5 else "08:00~08:00"
@@ -373,30 +377,30 @@ elif menu == "🌊 환경/폐수 일지":
             st.session_state['ww_preview'] = pd.DataFrame(rows); st.rerun()
         
         if 'ww_preview' in st.session_state:
-            st.info("💡 아래 표에서 직접 내용을 수정한 뒤 저장할 수 있습니다.")
+            st.info("💡 표 안의 내용을 직접 수정한 뒤 저장할 수 있습니다.")
+            # 🔥 AttributeError 해결: data_editor의 출력을 변수로 받고 한꺼번에 리스트화
             edited_df = st.data_editor(st.session_state['ww_preview'], use_container_width=True, hide_index=True)
             if st.button("💾 일지 최종 저장"):
                 try:
+                    # 🔥 iterrows 에러 방지를 위한 리스트 변환 저장
                     data_list = edited_df.fillna("").values.tolist()
                     sheet_wastewater.append_rows(data_list)
-                    st.success("수정된 내용이 구글 시트에 저장되었습니다!"); del st.session_state['ww_preview']; st.cache_data.clear(); st.rerun()
-                except Exception as e: st.error(f"저장 중 오류: {e}")
+                    st.success("저장되었습니다!"); del st.session_state['ww_preview']; st.cache_data.clear(); st.rerun()
+                except Exception as e: st.error(f"저장 오류: {e}")
 
     with tab_w2:
-        st.subheader("📋 저장된 운영일지 관리")
+        st.subheader("📋 저장된 일지 조회 및 삭제")
         if not df_wastewater.empty:
-            # 삭제를 위해 고유 인덱스 부여
-            df_ww_show = df_wastewater.copy()
-            df_ww_show['No'] = df_ww_show.index + 2
-            st.dataframe(df_ww_show.drop(columns=['No']), use_container_width=True, hide_index=True)
-            
+            df_ww_m = df_wastewater.copy()
+            df_ww_m['Row'] = df_ww_m.index + 2
+            st.dataframe(df_ww_m.drop(columns=['Row']), use_container_width=True, hide_index=True)
             st.markdown("---")
-            st.markdown("#### 🗑️ 잘못 기록된 이력 삭제")
-            del_target = st.selectbox("삭제할 날짜 선택", df_ww_show['No'].tolist(), format_func=lambda x: f"{df_ww_show.loc[x-2, '날짜']} 기록 삭제")
-            if st.button("🗑️ 선택한 이력 삭제", type="primary"):
+            # 🔥 삭제 기능
+            del_target = st.selectbox("삭제할 날짜 선택", df_ww_m['Row'].tolist(), format_func=lambda x: f"{df_ww_m.loc[x-2, '날짜']} 기록 삭제")
+            if st.button("🗑️ 선택 기록 삭제", type="primary"):
                 sheet_wastewater.delete_rows(int(del_target))
-                st.success("기록이 삭제되었습니다."); st.cache_data.clear(); st.rerun()
-        else: st.info("저장된 이력이 없습니다.")
+                st.success("삭제됨"); st.cache_data.clear(); st.rerun()
+        else: st.info("데이터가 없습니다.")
 
 # [6] 주간 회의 & 개선사항
 elif menu == "📋 주간 회의 & 개선사항":
@@ -408,18 +412,24 @@ elif menu == "📋 주간 회의 & 개선사항":
             df_open = df_meetings[df_meetings['상태'] != '완료'].copy()
             edited_mtg = st.data_editor(df_open, use_container_width=True, hide_index=True)
             if st.button("💾 변경사항 저장"):
-                all_rec = sheet_meetings.get_all_records(); hd = mtg_headers
-                new_all = []
-                for r in all_rec:
+                all_rec = sheet_meetings.get_all_values(); hd = mtg_headers
+                new_all = [hd]
+                for i, r in enumerate(sheet_meetings.get_all_records()):
                     match = edited_mtg[edited_mtg['ID'] == r['ID']]
-                    new_all.append([match.iloc[0][h] if not match.empty else r.get(h, "") for h in hd])
-                sheet_meetings.clear(); sheet_meetings.update([hd] + new_all); st.success("저장됨"); st.cache_data.clear(); st.rerun()
+                    if not match.empty: new_all.append([match.iloc[0][h] for h in hd])
+                    else: new_all.append([r.get(h, "") for h in hd])
+                sheet_meetings.clear(); sheet_meetings.update(new_all)
+                st.success("저장됨"); st.cache_data.clear(); st.rerun()
+    # (신규 등록 및 조회 탭 생략/기존 로직 유지)
     with tab_m2:
-        with st.form("new_mtg"):
-            n_date = st.date_input("날짜", datetime.date.today()); n_fac = st.selectbox("공장", ["1공장", "2공장", "공통"])
-            n_con = st.text_area("안건 내용"); n_as = st.text_input("담당자")
+        with st.form("mtg_new"):
+            n_d = st.date_input("날짜"); n_f = st.selectbox("공장", ["1공장","2공장","공통"]); n_c = st.text_area("안건"); n_a = st.text_input("담당자")
             if st.form_submit_button("등록"):
-                sheet_meetings.append_row([f"M-{int(time.time())}", n_date.strftime('%Y-%m-%d'), n_fac, n_con, n_as, "진행중", ""])
+                sheet_meetings.append_row([f"M-{int(time.time())}", n_d.strftime('%Y-%m-%d'), n_f, n_c, n_a, "진행중", ""])
                 st.success("등록됨"); st.cache_data.clear(); st.rerun()
     with tab_m3:
-        st.dataframe(df_meetings.sort_values('작성일', ascending=False), use_container_width=True, hide_index=True)
+        st.subheader("🔍 공장별 필터 조회")
+        f_fac = st.selectbox("공장 선택", ["전체", "1공장", "2공장", "공통"])
+        df_f = df_meetings.copy()
+        if f_fac != "전체": df_f = df_f[df_f['공장']==f_fac]
+        st.dataframe(df_f.sort_values('작성일', ascending=False), use_container_width=True, hide_index=True)
