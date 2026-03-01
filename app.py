@@ -965,14 +965,14 @@ elif menu == "🏭 현장 작업 (LOT 입력)":
 
                 for plt_num, grp in palette_groups:
                     st.markdown(f"**PLT {plt_num}**")
-                    for _, row in grp.iterrows():
+                    for row_idx, (_, row) in enumerate(grp.iterrows()):
                         cols_plt = st.columns([3, 2, 2, 2])
                         cols_plt[0].write(f"{row['코드']} | {row['품목명']}")
                         qty_val = cols_plt[1].number_input("수량(kg)", value=float(row['수량']),
                                                             min_value=0.0, step=10.0,
-                                                            key=f"plt_qty_{plt_num}_{row['코드']}")
-                        lot_val = cols_plt[2].text_input("LOT#", key=f"plt_lot_{plt_num}_{row['코드']}")
-                        note_val= cols_plt[3].text_input("비고", key=f"plt_note_{plt_num}_{row['코드']}")
+                                                            key=f"plt_qty_{plt_num}_{row['코드']}_{row_idx}")
+                        lot_val = cols_plt[2].text_input("LOT#", key=f"plt_lot_{plt_num}_{row['코드']}_{row_idx}")
+                        note_val= cols_plt[3].text_input("비고", key=f"plt_note_{plt_num}_{row['코드']}_{row_idx}")
                         lot_entries.append({
                             '팔레트': plt_num,
                             '코드': row['코드'],
