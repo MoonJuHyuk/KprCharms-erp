@@ -840,206 +840,118 @@ elif menu == "📋 주간 회의 & 개선사항":
 
 # ==================== [3] 현장 작업 (LOT 입력) ====================
 elif menu == "🏭 현장 작업 (LOT 입력)":
-    st.title("🏭 현장 작업 입력")
-    st.caption("현장 작업자용 간편 입력 화면입니다.")
+    st.title("🏭 현장 출고 LOT 입력")
+    st.caption("출고 예정 주문(팔레트)을 선택해 LOT를 입력하는 화면입니다.")
 
-    tab_lot1, tab_lot2 = st.tabs(["📦 생산/입고 입력", "🚚 출고 LOT 입력 (팔레트별)"])
+    st.info("영업에서 등록된 주문(팔레트)을 선택하면 품목이 자동으로 채워집니다.")
 
-    with tab_lot1:
-        c1, c2, c3 = st.columns(3)
-        lot_date    = c1.date_input("작업일", datetime.date.today(), key="ld")
-        lot_factory = c2.selectbox("공장", ["1공장", "2공장"], key="lf")
-        lot_cat     = c3.selectbox("구분", ["생산", "입고"], key="lc")
+    out_date    = st.date_input("출고일", datetime.date.today(), key="od")
+    out_factory = st.selectbox("공장", ["1공장", "2공장"], key="of")
 
-        c4, c5 = st.columns(2)
-        if lot_cat == "생산":
-            if lot_factory == "1공장": lopts = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
-            else:                       lopts = [f"압출{i}호" for i in range(1, 7)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
-            lot_line = c4.selectbox("설비 라인", lopts, key="ll")
+    # ── 주문(고객/팔레트) 선택 ──
+    if df_orders.empty or '상태' not in df_orders.columns:
+        st.warning("주문 데이터가 없습니다. 먼저 영업/출고 관리에서 주문을 등록해주세요.")
+    else:
+        pend_orders = df_orders[df_orders['상태'] == '준비'].copy()
+        if pend_orders.empty:
+            st.warning("출고 준비 중인 주문이 없습니다.")
         else:
-            lot_line = "-"
+            # 주문번호+거래처 선택
+            pend_orders['주문표시'] = pend_orders['주문번호'].astype(str) + " | " + pend_orders['거래처'].astype(str) + " | " + pend_orders['날짜'].astype(str)
+            unique_orders = pend_orders.drop_duplicates(subset=['주문번호'])
+            sel_order_disp = st.selectbox("주문 선택 (거래처/주문번호)", unique_orders['주문표시'].tolist(), key="sel_ord")
+            sel_order_id   = sel_order_disp.split(" | ")[0]
+            sel_order_rows = pend_orders[pend_orders['주문번호'] == sel_order_id].copy()
+            sel_order_rows['팔레트번호'] = pd.to_numeric(sel_order_rows['팔레트번호'], errors='coerce').fillna(0).astype(int)
+            sel_order_rows = sel_order_rows.sort_values('팔레트번호')
 
-        lot_row = None
-        if df_items.empty:
-            st.warning("품목 데이터가 없습니다. 새로고침을 눌러주세요.")
+            customer_name = sel_order_rows.iloc[0]['거래처']
+            st.markdown(f"**거래처:** {customer_name} | **총 팔레트:** {sel_order_rows['팔레트번호'].nunique()}개 | **총 수량:** {sel_order_rows['수량'].sum():,.0f} kg")
+
+            # 팔레트별 LOT 입력 테이블
+            st.markdown("#### 팔레트별 LOT 번호 입력")
+            st.caption("각 팔레트의 LOT 번호를 입력하세요. 수량은 주문 기준으로 자동 입력됩니다.")
+
+            palette_groups = sel_order_rows.groupby('팔레트번호')
+            lot_entries = []
+
+            for plt_num, grp in palette_groups:
+                st.markdown(f"**PLT {plt_num}**")
+                for row_idx, (_, row) in enumerate(grp.iterrows()):
+                    cols_plt = st.columns([3, 2, 2, 2])
+                    cols_plt[0].write(f"{row['코드']} | {row['품목명']}")
+                    qty_val = cols_plt[1].number_input("수량(kg)", value=float(row['수량']),
+                                                        min_value=0.0, step=10.0,
+                                                        key=f"plt_qty_{plt_num}_{row['코드']}_{row_idx}")
+                    lot_val = cols_plt[2].text_input("LOT#", key=f"plt_lot_{plt_num}_{row['코드']}_{row_idx}")
+                    note_val= cols_plt[3].text_input("비고", key=f"plt_note_{plt_num}_{row['코드']}_{row_idx}")
+                    lot_entries.append({
+                        '팔레트': plt_num,
+                        '코드': row['코드'],
+                        '품목명': row['품목명'],
+                        '타입': row.get('타입', '-'),
+                        '수량': qty_val,
+                        'LOT': lot_val,
+                        '비고': note_val,
+                    })
+                st.markdown("---")
+
+            # 재고 확인
+            if not df_inventory.empty:
+                st.markdown("#### 📦 출고 예정 품목 재고 확인")
+                inv_check_cols = st.columns([3,2,2,2])
+                inv_check_cols[0].write("**품목**"); inv_check_cols[1].write("**출고예정**"); inv_check_cols[2].write("**현재고**"); inv_check_cols[3].write("**상태**")
+                for entry in lot_entries:
+                    inv_r = df_inventory[df_inventory['코드'].astype(str) == str(entry['코드'])]
+                    stock = inv_r['현재고'].apply(safe_float).sum() if not inv_r.empty else 0
+                    ic = st.columns([3,2,2,2])
+                    ic[0].write(f"{entry['코드']} {entry['품목명']}")
+                    ic[1].write(f"{entry['수량']:,.0f} kg")
+                    ic[2].write(f"{stock:,.0f} kg")
+                    if stock >= entry['수량']: ic[3].success("✅ 충분")
+                    else: ic[3].error("⚠️ 부족")
+
+            if st.button("🚚 전체 출고 LOT 저장", type="primary", key="lot_out_save"):
+                if not sheet_logs:
+                    st.error("시트 연결 오류.")
+                elif not any(e['수량'] > 0 for e in lot_entries):
+                    st.error("수량을 입력하세요.")
+                else:
+                    try:
+                        now = datetime.datetime.now().strftime("%H:%M:%S")
+                        for entry in lot_entries:
+                            if entry['수량'] <= 0: continue
+                            remark = f"PLT:{entry['팔레트']} LOT:{entry['LOT']} {entry['비고']}".strip()
+                            sheet_logs.append_row([
+                                out_date.strftime('%Y-%m-%d'), now, out_factory, "출고",
+                                entry['코드'], entry['품목명'], "-",
+                                entry['타입'], "-",
+                                -entry['수량'], remark, customer_name, "-"
+                            ])
+                            update_inventory(out_factory, entry['코드'], -entry['수량'])
+                            time.sleep(0.2)
+                        # 주문 상태를 완료로 변경
+                        all_rec = sheet_orders.get_all_records()
+                        hd = sheet_orders.row_values(1)
+                        upd = [hd] + [[(r.get(h,"") if h!='상태' else ('완료' if r['주문번호']==sel_order_id else r.get('상태',''))) for h in hd] for r in all_rec]
+                        sheet_orders.clear(); sheet_orders.update(upd)
+                        st.cache_data.clear()
+                        st.success(f"✅ {customer_name} 출고 완료! LOT 기록 저장됨")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"저장 오류: {e}")
+
+    st.markdown("---")
+    st.subheader("📋 오늘 출고 현황")
+    if not df_logs.empty and '구분' in df_logs.columns:
+        today_s = datetime.date.today().strftime('%Y-%m-%d')
+        df_out_today = df_logs[(df_logs['날짜'].astype(str).str[:10] == today_s) & (df_logs['구분'] == '출고')]
+        if not df_out_today.empty:
+            dc2 = [c for c in ['시간', '공장', '코드', '품목명', '수량', '비고'] if c in df_out_today.columns]
+            st.dataframe(df_out_today[dc2].sort_values('시간', ascending=False), use_container_width=True, hide_index=True)
+            st.metric("오늘 총 출고량", f"{abs(df_out_today['수량'].sum()):,.0f} kg")
         else:
-            df_li = df_items.copy()
-            if '구분' in df_li.columns:
-                if lot_cat == "생산": df_li = df_li[df_li['구분'].isin(['제품', '완제품', '반제품'])]
-                else:                  df_li = df_li[df_li['구분'] == '원자재']
-            if df_li.empty: df_li = df_items.copy()
-            for col in ['코드', '품목명', '규격']:
-                if col not in df_li.columns: df_li[col] = ''
-            df_li['Disp'] = df_li['코드'].astype(str) + " | " + df_li['품목명'].astype(str) + " (" + df_li['규격'].astype(str) + ")"
-            lot_sel = c5.selectbox("품목 선택", df_li['Disp'].unique(), key="li")
-            m = df_li[df_li['Disp'] == lot_sel]
-            if not m.empty: lot_row = m.iloc[0]
-
-        c6, c7 = st.columns(2)
-        lot_qty  = c6.number_input("수량 (kg)", min_value=0.0, step=10.0, key="lq")
-        lot_note = c7.text_input("비고 / LOT번호", key="ln")
-
-        if lot_row is not None:
-            st.success(f"선택: **{lot_row.get('코드','')}** | {lot_row.get('품목명','')} | {lot_row.get('규격','')} | {lot_row.get('타입','')} | {lot_row.get('색상','')}")
-
-        if st.button("✅ 저장", type="primary", key="lsave"):
-            if lot_row is None: st.error("품목을 선택하세요.")
-            elif lot_qty <= 0: st.error("수량을 입력하세요.")
-            elif not sheet_logs: st.error("시트 연결 오류. 새로고침 후 재시도.")
-            else:
-                try:
-                    now = datetime.datetime.now().strftime("%H:%M:%S")
-                    sheet_logs.append_row([
-                        lot_date.strftime('%Y-%m-%d'), now, lot_factory, lot_cat,
-                        lot_row.get('코드', ''), lot_row.get('품목명', ''), lot_row.get('규격', '-'),
-                        lot_row.get('타입', '-'), lot_row.get('색상', '-'),
-                        lot_qty, lot_note, "-", lot_line
-                    ])
-                    update_inventory(lot_factory, lot_row.get('코드', ''), lot_qty,
-                                     lot_row.get('품목명', ''), lot_row.get('규격', '-'),
-                                     lot_row.get('타입', '-'), lot_row.get('색상', '-'))
-                    if lot_cat == "생산" and not df_bom.empty:
-                        bt = df_bom[df_bom['제품코드'].astype(str) == str(lot_row.get('코드', ''))]
-                        if '타입' in df_bom.columns:
-                            bt = bt[bt['타입'].astype(str) == str(lot_row.get('타입', ''))]
-                        bt = bt.drop_duplicates(subset=['자재코드'])
-                        for _, r in bt.iterrows():
-                            req = lot_qty * safe_float(r['소요량'])
-                            update_inventory(lot_factory, str(r['자재코드']), -req)
-                            time.sleep(0.3)
-                            sheet_logs.append_row([lot_date.strftime('%Y-%m-%d'), now, lot_factory, "사용(Auto)",
-                                r['자재코드'], "System", "-", "-", "-", -req, f"{lot_row.get('코드','')} 생산", "-", lot_line])
-                    st.cache_data.clear()
-                    st.success(f"✅ {lot_cat} {lot_qty:,.0f}kg 저장 완료!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"저장 오류: {e}")
-
-        st.markdown("---")
-        st.subheader(f"📋 오늘 작업 현황 ({datetime.date.today()})")
-        if not df_logs.empty and '구분' in df_logs.columns:
-            today_s = datetime.date.today().strftime('%Y-%m-%d')
-            df_tod  = df_logs[(df_logs['날짜'].astype(str).str[:10] == today_s) & (df_logs['구분'].isin(['생산', '입고']))]
-            if not df_tod.empty:
-                dc = [c for c in ['시간', '공장', '구분', '코드', '품목명', '수량', '비고'] if c in df_tod.columns]
-                st.dataframe(df_tod[dc].sort_values('시간', ascending=False), use_container_width=True, hide_index=True)
-                st.metric("오늘 총 생산량", f"{df_tod[df_tod['구분']=='생산']['수량'].sum():,.0f} kg")
-            else:
-                st.info("오늘 작업 기록이 없습니다.")
-        else:
-            st.info("데이터가 없습니다.")
-
-    with tab_lot2:
-        st.subheader("🚚 출고 LOT 입력 — 팔레트(고객) 기준")
-        st.info("영업에서 등록된 주문(팔레트)을 선택하면 품목이 자동으로 채워집니다.")
-
-        out_date    = st.date_input("출고일", datetime.date.today(), key="od")
-        out_factory = st.selectbox("공장", ["1공장", "2공장"], key="of")
-
-        # ── 주문(고객/팔레트) 선택 ──
-        if df_orders.empty or '상태' not in df_orders.columns:
-            st.warning("주문 데이터가 없습니다. 먼저 영업/출고 관리에서 주문을 등록해주세요.")
-        else:
-            pend_orders = df_orders[df_orders['상태'] == '준비'].copy()
-            if pend_orders.empty:
-                st.warning("출고 준비 중인 주문이 없습니다.")
-            else:
-                # 주문번호+거래처 선택
-                pend_orders['주문표시'] = pend_orders['주문번호'].astype(str) + " | " + pend_orders['거래처'].astype(str) + " | " + pend_orders['날짜'].astype(str)
-                unique_orders = pend_orders.drop_duplicates(subset=['주문번호'])
-                sel_order_disp = st.selectbox("주문 선택 (거래처/주문번호)", unique_orders['주문표시'].tolist(), key="sel_ord")
-                sel_order_id   = sel_order_disp.split(" | ")[0]
-                sel_order_rows = pend_orders[pend_orders['주문번호'] == sel_order_id].copy()
-                sel_order_rows['팔레트번호'] = pd.to_numeric(sel_order_rows['팔레트번호'], errors='coerce').fillna(0).astype(int)
-                sel_order_rows = sel_order_rows.sort_values('팔레트번호')
-
-                customer_name = sel_order_rows.iloc[0]['거래처']
-                st.markdown(f"**거래처:** {customer_name} | **총 팔레트:** {sel_order_rows['팔레트번호'].nunique()}개 | **총 수량:** {sel_order_rows['수량'].sum():,.0f} kg")
-
-                # 팔레트별 LOT 입력 테이블
-                st.markdown("#### 팔레트별 LOT 번호 입력")
-                st.caption("각 팔레트의 LOT 번호를 입력하세요. 수량은 주문 기준으로 자동 입력됩니다.")
-
-                palette_groups = sel_order_rows.groupby('팔레트번호')
-                lot_entries = []
-
-                for plt_num, grp in palette_groups:
-                    st.markdown(f"**PLT {plt_num}**")
-                    for row_idx, (_, row) in enumerate(grp.iterrows()):
-                        cols_plt = st.columns([3, 2, 2, 2])
-                        cols_plt[0].write(f"{row['코드']} | {row['품목명']}")
-                        qty_val = cols_plt[1].number_input("수량(kg)", value=float(row['수량']),
-                                                            min_value=0.0, step=10.0,
-                                                            key=f"plt_qty_{plt_num}_{row['코드']}_{row_idx}")
-                        lot_val = cols_plt[2].text_input("LOT#", key=f"plt_lot_{plt_num}_{row['코드']}_{row_idx}")
-                        note_val= cols_plt[3].text_input("비고", key=f"plt_note_{plt_num}_{row['코드']}_{row_idx}")
-                        lot_entries.append({
-                            '팔레트': plt_num,
-                            '코드': row['코드'],
-                            '품목명': row['품목명'],
-                            '타입': row.get('타입', '-'),
-                            '수량': qty_val,
-                            'LOT': lot_val,
-                            '비고': note_val,
-                        })
-                    st.markdown("---")
-
-                # 재고 확인
-                if not df_inventory.empty:
-                    st.markdown("#### 📦 출고 예정 품목 재고 확인")
-                    inv_check_cols = st.columns([3,2,2,2])
-                    inv_check_cols[0].write("**품목**"); inv_check_cols[1].write("**출고예정**"); inv_check_cols[2].write("**현재고**"); inv_check_cols[3].write("**상태**")
-                    for entry in lot_entries:
-                        inv_r = df_inventory[df_inventory['코드'].astype(str) == str(entry['코드'])]
-                        stock = inv_r['현재고'].apply(safe_float).sum() if not inv_r.empty else 0
-                        ic = st.columns([3,2,2,2])
-                        ic[0].write(f"{entry['코드']} {entry['품목명']}")
-                        ic[1].write(f"{entry['수량']:,.0f} kg")
-                        ic[2].write(f"{stock:,.0f} kg")
-                        if stock >= entry['수량']: ic[3].success("✅ 충분")
-                        else: ic[3].error("⚠️ 부족")
-
-                if st.button("🚚 전체 출고 LOT 저장", type="primary", key="lot_out_save"):
-                    if not sheet_logs:
-                        st.error("시트 연결 오류.")
-                    elif not any(e['수량'] > 0 for e in lot_entries):
-                        st.error("수량을 입력하세요.")
-                    else:
-                        try:
-                            now = datetime.datetime.now().strftime("%H:%M:%S")
-                            for entry in lot_entries:
-                                if entry['수량'] <= 0: continue
-                                remark = f"PLT:{entry['팔레트']} LOT:{entry['LOT']} {entry['비고']}".strip()
-                                sheet_logs.append_row([
-                                    out_date.strftime('%Y-%m-%d'), now, out_factory, "출고",
-                                    entry['코드'], entry['품목명'], "-",
-                                    entry['타입'], "-",
-                                    -entry['수량'], remark, customer_name, "-"
-                                ])
-                                update_inventory(out_factory, entry['코드'], -entry['수량'])
-                                time.sleep(0.2)
-                            # 주문 상태를 완료로 변경
-                            all_rec = sheet_orders.get_all_records()
-                            hd = sheet_orders.row_values(1)
-                            upd = [hd] + [[(r.get(h,"") if h!='상태' else ('완료' if r['주문번호']==sel_order_id else r.get('상태',''))) for h in hd] for r in all_rec]
-                            sheet_orders.clear(); sheet_orders.update(upd)
-                            st.cache_data.clear()
-                            st.success(f"✅ {customer_name} 출고 완료! LOT 기록 저장됨")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"저장 오류: {e}")
-
-        st.markdown("---")
-        st.subheader("📋 오늘 출고 현황")
-        if not df_logs.empty and '구분' in df_logs.columns:
-            today_s = datetime.date.today().strftime('%Y-%m-%d')
-            df_out_today = df_logs[(df_logs['날짜'].astype(str).str[:10] == today_s) & (df_logs['구분'] == '출고')]
-            if not df_out_today.empty:
-                dc2 = [c for c in ['시간', '공장', '코드', '품목명', '수량', '비고'] if c in df_out_today.columns]
-                st.dataframe(df_out_today[dc2].sort_values('시간', ascending=False), use_container_width=True, hide_index=True)
-                st.metric("오늘 총 출고량", f"{abs(df_out_today['수량'].sum()):,.0f} kg")
-            else:
-                st.info("오늘 출고 기록이 없습니다.")
+            st.info("오늘 출고 기록이 없습니다.")
 
 
 # ==================== [4] 이력/LOT 검색 ====================
