@@ -117,6 +117,20 @@ def safe_float(val):
     try: return float(val)
     except: return 0.0
 
+def safe_sheet_replace(sheet, new_data):
+    """clear()+update() 대신 사용. 실패 시 백업으로 복구."""
+    backup = sheet.get_all_values()
+    sheet.clear()
+    try:
+        sheet.update(new_data)
+    except Exception as e:
+        try:
+            sheet.clear()
+            sheet.update(backup)
+        except Exception:
+            pass
+        raise e
+
 # --- 4. 재고 업데이트 ---
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
@@ -183,8 +197,9 @@ if not st.session_state["authenticated"]:
     st.title("🔒 KPR ERP 시스템")
     c1, c2 = st.columns([1, 2])
     with c1:
+        pwd_input = st.text_input("접속 암호", type="password")
         if st.button("로그인", type="primary"):
-            if st.text_input("접속 암호", type="password") == "kpr1234":
+            if pwd_input == "kpr1234":
                 st.session_state["authenticated"] = True; st.rerun()
             else: st.error("암호가 틀렸습니다.")
     st.stop()
@@ -600,16 +615,21 @@ elif menu == "영업/출고 관리":
             cl_nm = st.text_input("거래처명 (CUSTOMER)", placeholder="예: SHANGHAI YILIU")
             if not df_items.empty:
                 df_sale = df_items[df_items['구분'].isin(['제품','완제품'])].copy()
-                df_sale['Disp'] = df_sale['코드'].astype(str) + " (" + df_sale['규격'].astype(str) + "/" + df_sale['색상'].astype(str) + "/" + df_sale['타입'].astype(str) + ")"
-                sel_it = st.selectbox("품목 선택", df_sale['Disp'].unique())
-                row_it = df_sale[df_sale['Disp']==sel_it].iloc[0]
-                ord_q = st.number_input("주문량(kg)", step=100.0)
-                ord_rem = st.text_input("📦 포장 단위 (REMARK)", value="BOX")
-                if st.button("🛒 장바구니 담기"):
-                    st.session_state['cart'].append({
-                        "코드": row_it['코드'], "품목명": row_it['품목명'], "규격": row_it['규격'],
-                        "색상": row_it['색상'], "타입": row_it['타입'], "수량": ord_q, "비고": ord_rem
-                    }); st.rerun()
+                if df_sale.empty:
+                    st.warning("등록된 제품/완제품 품목이 없습니다. 품목 관리에서 먼저 등록해주세요.")
+                    row_it = None
+                else:
+                    df_sale['Disp'] = df_sale['코드'].astype(str) + " (" + df_sale['규격'].astype(str) + "/" + df_sale['색상'].astype(str) + "/" + df_sale['타입'].astype(str) + ")"
+                    sel_it = st.selectbox("품목 선택", df_sale['Disp'].unique())
+                    row_it = df_sale[df_sale['Disp']==sel_it].iloc[0]
+                if row_it is not None:
+                    ord_q = st.number_input("주문량(kg)", step=100.0)
+                    ord_rem = st.text_input("📦 포장 단위 (REMARK)", value="BOX")
+                    if st.button("🛒 장바구니 담기"):
+                        st.session_state['cart'].append({
+                            "코드": row_it['코드'], "품목명": row_it['품목명'], "규격": row_it['규격'],
+                            "색상": row_it['색상'], "타입": row_it['타입'], "수량": ord_q, "비고": ord_rem
+                        }); st.rerun()
         with c2:
             st.subheader("🛒 장바구니 목록")
             if st.session_state['cart']:
@@ -664,23 +684,26 @@ elif menu == "영업/출고 관리":
                     new_max_kg = st.number_input("새로운 팔레트당 적재량 (kg)", min_value=100.0, value=1200.0, step=100.0, key="resplit_kg")
                     if st.button("🚀 재구성 실행"):
                         with st.spinner("팔레트 재계산 중..."):
-                            combined = original_df.groupby(['코드', '품목명', '비고', '타입'])['수량'].sum().reset_index()
-                            new_rows_data = []
-                            plt_cnt = 1; current_w = 0
-                            for _, r in combined.iterrows():
-                                rem = r['수량']
-                                while rem > 0:
-                                    space = new_max_kg - current_w
-                                    if space <= 0: plt_cnt += 1; current_w = 0; space = new_max_kg
-                                    load = min(rem, space)
-                                    new_rows_data.append([tgt, original_df.iloc[0]['날짜'], original_df.iloc[0]['거래처'], r['코드'], r['품목명'], load, plt_cnt, "준비", r['비고'], "", r['타입']])
-                                    current_w += load; rem -= load
-                            all_records = sheet_orders.get_all_records()
-                            headers = sheet_orders.row_values(1)
-                            filtered_records = [r for r in all_records if str(r['주문번호']) != str(tgt)]
-                            new_final_values = [headers] + [[r.get(h, "") for h in headers] for r in filtered_records] + new_rows_data
-                            sheet_orders.clear(); sheet_orders.update(new_final_values)
-                            st.success("팔레트 재구성이 완료되었습니다!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                            try:
+                                combined = original_df.groupby(['코드', '품목명', '비고', '타입'])['수량'].sum().reset_index()
+                                new_rows_data = []
+                                plt_cnt = 1; current_w = 0
+                                for _, r in combined.iterrows():
+                                    rem = r['수량']
+                                    while rem > 0:
+                                        space = new_max_kg - current_w
+                                        if space <= 0: plt_cnt += 1; current_w = 0; space = new_max_kg
+                                        load = min(rem, space)
+                                        new_rows_data.append([tgt, original_df.iloc[0]['날짜'], original_df.iloc[0]['거래처'], r['코드'], r['품목명'], load, plt_cnt, "준비", r['비고'], "", r['타입']])
+                                        current_w += load; rem -= load
+                                all_records = sheet_orders.get_all_records()
+                                headers = sheet_orders.row_values(1)
+                                filtered_records = [r for r in all_records if str(r['주문번호']) != str(tgt)]
+                                new_final_values = [headers] + [[r.get(h, "") for h in headers] for r in filtered_records] + new_rows_data
+                                safe_sheet_replace(sheet_orders, new_final_values)
+                                st.success("팔레트 재구성이 완료되었습니다!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                            except Exception as e:
+                                st.error(f"재구성 오류: {e}")
 
                 st.markdown("---")
                 c_mod1, c_mod2 = st.columns(2)
@@ -689,7 +712,8 @@ elif menu == "영업/출고 관리":
                     with st.form("add_form"):
                         new_code = st.selectbox("제품 코드", df_items['코드'].unique())
                         new_qty = st.number_input("수량(kg)", min_value=0.0, step=10.0)
-                        new_plt = st.number_input("팔레트 번호", value=int(display_df['팔레트번호'].max()))
+                        _max_plt = display_df['팔레트번호'].max()
+                        new_plt = st.number_input("팔레트 번호", value=int(_max_plt) if pd.notna(_max_plt) else 1)
                         if st.form_submit_button("추가"):
                             row = [tgt, original_df.iloc[0]['날짜'], original_df.iloc[0]['거래처'], new_code, "", new_qty, new_plt, "준비", "BOX", "", ""]
                             sheet_orders.append_row(row); st.success("추가됨"); st.cache_data.clear(); st.rerun()
@@ -703,17 +727,20 @@ elif menu == "영업/출고 관리":
                         ed_qty = st.number_input("수량", value=float(target['수량']))
                         ed_plt = st.number_input("팔레트", value=int(target['팔레트번호']))
                         if st.form_submit_button("💾 저장"):
-                            all_vals = sheet_orders.get_all_records()
-                            headers = sheet_orders.row_values(1)
-                            updated = []
-                            row_count = 0
-                            for r in all_vals:
-                                if str(r['주문번호']) == str(tgt):
-                                    if row_count == sel_idx: r['수량'] = ed_qty; r['팔레트번호'] = ed_plt
-                                    row_count += 1
-                                updated.append([r.get(h, "") for h in headers])
-                            sheet_orders.clear(); sheet_orders.update([headers] + updated)
-                            st.success("수정됨"); st.cache_data.clear(); st.rerun()
+                            try:
+                                all_vals = sheet_orders.get_all_records()
+                                headers = sheet_orders.row_values(1)
+                                updated = []
+                                row_count = 0
+                                for r in all_vals:
+                                    if str(r['주문번호']) == str(tgt):
+                                        if row_count == sel_idx: r['수량'] = ed_qty; r['팔레트번호'] = ed_plt
+                                        row_count += 1
+                                    updated.append([r.get(h, "") for h in headers])
+                                safe_sheet_replace(sheet_orders, [headers] + updated)
+                                st.success("수정됨"); st.cache_data.clear(); st.rerun()
+                            except Exception as e:
+                                st.error(f"수정 오류: {e}")
 
     with tab_prt:
         st.subheader("🖨️ Packing List & Labels")
@@ -799,7 +826,7 @@ elif menu == "영업/출고 관리":
                                 'PLT': plt_num,
                                 'ITEM NAME': code_map.get(str(r['코드']), str(r['코드'])),
                                 "Q'TY": r['수량'],
-                                'COLOR': df_items[df_items['코드'].astype(str)==str(r['코드'])].iloc[0]['색상'] if not df_items.empty else "-",
+                                'COLOR': (lambda _f: _f.iloc[0]['색상'] if not _f.empty else "-")(df_items[df_items['코드'].astype(str)==str(r['코드'])]) if not df_items.empty else "-",
                                 'SHAPE': final_shape,
                                 'LOT#': r.get('LOT번호', ''),
                                 'REMARK': r['비고']
@@ -926,12 +953,21 @@ elif menu == "영업/출고 관리":
                 d_out = pend[pend['주문번호']==tgt_out]
                 st.dataframe(d_out[['코드','품목명','수량','팔레트번호']], use_container_width=True)
                 if st.button("🚀 출고 확정", type="primary"):
-                    for _, row in d_out.iterrows():
-                        update_inventory(factory, row['코드'], -safe_float(row['수량']))
-                        sheet_logs.append_row([datetime.date.today().strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], row['품목명'], "-", "-", "-", -safe_float(row['수량']), f"주문출고({tgt_out})", row['거래처'], "-"])
-                    all_rec = sheet_orders.get_all_records(); hd = sheet_orders.row_values(1)
-                    upd = [hd] + [[r.get(h, "") if r['주문번호']!=tgt_out else (r['상태'] if h!='상태' else '완료') for h in hd] for r in all_rec]
-                    sheet_orders.clear(); sheet_orders.update(upd); st.success("출고 완료"); st.cache_data.clear(); st.rerun()
+                    try:
+                        for _, row in d_out.iterrows():
+                            update_inventory(factory, row['코드'], -safe_float(row['수량']))
+                            sheet_logs.append_row([datetime.date.today().strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], row['품목명'], "-", "-", "-", -safe_float(row['수량']), f"주문출고({tgt_out})", row['거래처'], "-"])
+                        all_rec = sheet_orders.get_all_records()
+                        hd = sheet_orders.row_values(1)
+                        upd = [hd] + [
+                            [('완료' if h == '상태' else r.get(h, "")) if str(r['주문번호']) == str(tgt_out) else r.get(h, "")
+                             for h in hd]
+                            for r in all_rec
+                        ]
+                        safe_sheet_replace(sheet_orders, upd)
+                        st.success("출고 완료"); st.cache_data.clear(); st.rerun()
+                    except Exception as e:
+                        st.error(f"출고 확정 오류: {e}")
 
     with tab_cancel:
         st.subheader("↩️ 출고 취소 및 재고 복구")
@@ -968,11 +1004,11 @@ elif menu == "영업/출고 관리":
                         all_rec = sheet_orders.get_all_records()
                         hd = sheet_orders.row_values(1)
                         upd = [hd] + [
-                            [(r['상태'] if h != '상태' else '준비') if str(r['주문번호']) == str(tgt_cancel) else r.get(h, "")
+                            [('준비' if h == '상태' else r.get(h, "")) if str(r['주문번호']) == str(tgt_cancel) else r.get(h, "")
                              for h in hd]
                             for r in all_rec
                         ]
-                        sheet_orders.clear(); sheet_orders.update(upd)
+                        safe_sheet_replace(sheet_orders, upd)
                         st.cache_data.clear(); st.success(f"✅ 주문 [{tgt_cancel}] 출고 취소 완료. 재고가 복구되었습니다."); st.rerun()
                     except Exception as e:
                         st.error(f"오류: {e}")
@@ -1082,8 +1118,7 @@ elif menu == "📋 주간 회의 & 개선사항":
                             df_all.loc[row_mask, col] = '' if (isinstance(val, float) and pd.isna(val)) else str(val)
 
             write_data = [headers] + df_all.fillna('').astype(str).values.tolist()
-            sheet_meetings.clear()
-            sheet_meetings.update(write_data)
+            safe_sheet_replace(sheet_meetings, write_data)
             st.success("저장 완료"); st.cache_data.clear(); st.rerun()
         except Exception as e:
             st.error(f"저장 실패: {e}")
@@ -1287,11 +1322,22 @@ elif menu == "🏭 현장 작업 (LOT 입력)":
                             ])
                             update_inventory(out_factory, entry['코드'], -entry['수량'])
                             time.sleep(0.2)
-                        # 주문 상태를 완료로 변경
+                        # 주문 상태를 완료로 변경 + LOT번호 저장
+                        lot_map = {(str(e['코드']), str(e['팔레트'])): e['LOT'] for e in lot_entries if e['LOT']}
                         all_rec = sheet_orders.get_all_records()
                         hd = sheet_orders.row_values(1)
-                        upd = [hd] + [[(r.get(h,"") if h!='상태' else ('완료' if r['주문번호']==sel_order_id else r.get('상태',''))) for h in hd] for r in all_rec]
-                        sheet_orders.clear(); sheet_orders.update(upd)
+                        _plt_counter = {}
+                        def _upd_row(r):
+                            if str(r['주문번호']) != str(sel_order_id):
+                                return [r.get(h, "") for h in hd]
+                            _key = (str(r.get('코드', '')), str(r.get('팔레트번호', '')))
+                            _lot = lot_map.get(_key, r.get('LOT번호', ''))
+                            return [
+                                ('완료' if h == '상태' else (_lot if h == 'LOT번호' else r.get(h, "")))
+                                for h in hd
+                            ]
+                        upd = [hd] + [_upd_row(r) for r in all_rec]
+                        safe_sheet_replace(sheet_orders, upd)
                         st.cache_data.clear()
                         st.success(f"✅ {customer_name} 출고 완료! LOT 기록 저장됨")
                         st.rerun()
