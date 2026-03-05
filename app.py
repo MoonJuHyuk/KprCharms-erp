@@ -72,18 +72,21 @@ def get_all_sheets():
     ]
     result = []
     for name, headers in configs:
-        try:
-            result.append(d.worksheet(name))
-        except:
-            if headers:
-                try:
-                    ws = d.add_worksheet(title=name, rows="1000", cols="20")
-                    ws.append_row(headers)
-                    result.append(ws)
-                except:
-                    result.append(None)
-            else:
-                result.append(None)
+        ws = None
+        for attempt in range(3):
+            try:
+                ws = d.worksheet(name)
+                break
+            except Exception:
+                if attempt < 2:
+                    time.sleep(1)
+        if ws is None and headers:
+            try:
+                ws = d.add_worksheet(title=name, rows="1000", cols="20")
+                ws.append_row(headers)
+            except Exception:
+                ws = None
+        result.append(ws)
     return tuple(result)
 
 sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders, sheet_wastewater, sheet_meetings = get_all_sheets()
@@ -216,7 +219,7 @@ if 'cart' not in st.session_state: st.session_state['cart'] = []
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     else: st.header("🏭 KPR / Chamstek")
-    if st.button("🔄 새로고침"): st.cache_data.clear(); st.rerun()
+    if st.button("🔄 새로고침"): st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
     st.markdown("---")
     menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색", "🌊 환경/폐수 일지", "📋 주간 회의 & 개선사항"])
     st.markdown("---")
