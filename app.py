@@ -715,7 +715,8 @@ elif menu == "영업/출고 관리":
                 with c_mod1:
                     st.markdown("#### ➕ 품목 추가")
                     with st.form("add_form"):
-                        new_code = st.selectbox("제품 코드", df_items['코드'].unique())
+                        _code_opts = df_items['코드'].unique() if not df_items.empty and '코드' in df_items.columns else []
+                        new_code = st.selectbox("제품 코드", _code_opts)
                         new_qty = st.number_input("수량(kg)", min_value=0.0, step=10.0)
                         _max_plt = display_df['팔레트번호'].max()
                         new_plt = st.number_input("팔레트 번호", value=int(_max_plt) if pd.notna(_max_plt) else 1)
