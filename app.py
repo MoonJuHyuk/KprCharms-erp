@@ -59,30 +59,34 @@ def get_connection():
 
 doc = get_connection()
 
-def get_sheet(doc, name, create_headers=None):
-    if doc is None: return None
-    try:
-        return doc.worksheet(name)
-    except:
-        if create_headers:
-            try:
-                ws = doc.add_worksheet(title=name, rows="1000", cols="20")
-                ws.append_row(create_headers)
-                return ws
-            except: return None
-        return None
+@st.cache_resource
+def get_all_sheets():
+    d = get_connection()
+    if d is None:
+        return (None,) * 7
+    ww_h = ['날짜', '대표자', '환경기술인', '가동시간', '플라스틱재생칩', '합성수지', '안료', '용수사용량', '폐수발생량', '위탁량', '기타']
+    mtg_h = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
+    configs = [
+        ('Items', None), ('Inventory', None), ('Logs', None), ('BOM', None), ('Orders', None),
+        ('Wastewater', ww_h), ('Meetings', mtg_h),
+    ]
+    result = []
+    for name, headers in configs:
+        try:
+            result.append(d.worksheet(name))
+        except:
+            if headers:
+                try:
+                    ws = d.add_worksheet(title=name, rows="1000", cols="20")
+                    ws.append_row(headers)
+                    result.append(ws)
+                except:
+                    result.append(None)
+            else:
+                result.append(None)
+    return tuple(result)
 
-sheet_items = get_sheet(doc, 'Items')
-sheet_inventory = get_sheet(doc, 'Inventory')
-sheet_logs = get_sheet(doc, 'Logs')
-sheet_bom = get_sheet(doc, 'BOM')
-sheet_orders = get_sheet(doc, 'Orders')
-
-ww_headers = ['날짜', '대표자', '환경기술인', '가동시간', '플라스틱재생칩', '합성수지', '안료', '용수사용량', '폐수발생량', '위탁량', '기타']
-sheet_wastewater = get_sheet(doc, 'Wastewater', ww_headers)
-
-mtg_headers = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
-sheet_meetings = get_sheet(doc, 'Meetings', mtg_headers)
+sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders, sheet_wastewater, sheet_meetings = get_all_sheets()
 
 # --- 3. 데이터 로딩 ---
 @st.cache_data(ttl=60)
@@ -105,7 +109,8 @@ def load_data():
         data.append(df)
     
     try:
-        s_map = get_sheet(doc, 'Print_Mapping')
+        _d = get_connection()
+        s_map = _d.worksheet('Print_Mapping') if _d else None
         if s_map: df_map = pd.DataFrame(s_map.get_all_records())
         else: df_map = pd.DataFrame(columns=['Code', 'Print_Name'])
     except: df_map = pd.DataFrame(columns=['Code', 'Print_Name'])
