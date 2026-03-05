@@ -231,12 +231,17 @@ with st.sidebar:
 if menu == "대시보드":
     st.title("📊 공장 현황 대시보드")
     if not df_logs.empty:
+        # 공장 필터 (대시보드 전체 적용)
+        dash_fac = st.radio("🏭 공장 선택", ["전체", "1공장", "2공장"], horizontal=True, key="dash_fac")
+        df_logs_dash = df_logs[df_logs['공장'] == dash_fac].copy() if dash_fac != "전체" and '공장' in df_logs.columns else df_logs.copy()
+
+        st.markdown("---")
         today = datetime.date.today()
-        target_date_str = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d") 
+        target_date_str = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
         display_label = "어제"
 
-        if '구분' in df_logs.columns and '날짜' in df_logs.columns:
-            prod_dates = df_logs[df_logs['구분'] == '생산']['날짜'].unique()
+        if '구분' in df_logs_dash.columns and '날짜' in df_logs_dash.columns:
+            prod_dates = df_logs_dash[df_logs_dash['구분'] == '생산']['날짜'].unique()
             if len(prod_dates) > 0:
                 prod_dates = sorted(prod_dates, reverse=True)
                 for d_str in prod_dates:
@@ -249,9 +254,9 @@ if menu == "대시보드":
                             break
                     except: continue
 
-        df_target_day = df_logs[df_logs['날짜'] == target_date_str]
+        df_target_day = df_logs_dash[df_logs_dash['날짜'] == target_date_str]
         prod_data = df_target_day[df_target_day['구분']=='생산'].copy() if '구분' in df_target_day.columns else pd.DataFrame()
-        
+
         total_prod=0; ka_prod=0; kg_prod=0; ka_ban_prod=0; cp_prod=0
         if not prod_data.empty:
             prod_data['Category'] = prod_data.apply(get_product_category, axis=1)
@@ -263,16 +268,17 @@ if menu == "대시보드":
 
         out_val = df_target_day[df_target_day['구분']=='출고']['수량'].sum() if '구분' in df_target_day.columns else 0
         pend_cnt = len(df_orders[df_orders['상태']=='준비']['주문번호'].unique()) if not df_orders.empty and '상태' in df_orders.columns else 0
-        
-        st.subheader(f"📅 {display_label}({target_date_str}) 실적 요약")
+
+        fac_label = f" ({dash_fac})" if dash_fac != "전체" else ""
+        st.subheader(f"📅 {display_label}({target_date_str}) 실적 요약{fac_label}")
         k1, k2, k3 = st.columns(3)
         k1.metric(f"{display_label} 총 생산", f"{total_prod:,.0f} kg")
         k1.markdown(f"<div style='font-size:14px; color:gray;'>• KA: {ka_prod:,.0f} kg<br>• KG: {kg_prod:,.0f} kg<br>• KA반제품: {ka_ban_prod:,.0f} kg<br>• Compound: {cp_prod:,.0f} kg</div>", unsafe_allow_html=True)
         k2.metric(f"{display_label} 총 출고", f"{out_val:,.0f} kg")
         k3.metric("출고 대기 주문", f"{pend_cnt} 건", delta="작업 필요", delta_color="inverse")
         st.markdown("---")
-        
-        if '구분' in df_logs.columns:
+
+        if '구분' in df_logs_dash.columns:
             st.subheader("📈 생산 추이 분석 (제품군별 비교)")
             c_filter1, c_filter2 = st.columns([2, 1])
             with c_filter1:
@@ -281,8 +287,8 @@ if menu == "대시보드":
                 search_range = st.date_input("조회 기간 설정", [week_ago, target_dt_obj])
             with c_filter2:
                 filter_opt = st.selectbox("조회 품목 필터", ["전체", "KA", "KG", "KA반제품", "Compound"])
-            
-            df_prod_log = df_logs[df_logs['구분'] == '생산'].copy()
+
+            df_prod_log = df_logs_dash[df_logs_dash['구분'] == '생산'].copy()
             if len(search_range) == 2:
                 s_d, e_d = search_range
                 all_dates = pd.date_range(start=s_d, end=e_d)
@@ -292,14 +298,14 @@ if menu == "대시보드":
                     d_str = d.strftime('%Y-%m-%d')
                     for c in categories: skeleton_data.append({'날짜': d_str, 'Category': c, '수량': 0})
                 df_skeleton = pd.DataFrame(skeleton_data)
-                
+
                 if not df_prod_log.empty:
                     df_prod_log['날짜'] = pd.to_datetime(df_prod_log['날짜']).dt.strftime('%Y-%m-%d')
                     df_prod_log['Category'] = df_prod_log.apply(get_product_category, axis=1)
                     if filter_opt != "전체": df_prod_log = df_prod_log[df_prod_log['Category'] == filter_opt]
                     real_sum = df_prod_log.groupby(['날짜', 'Category'])['수량'].sum().reset_index()
                 else: real_sum = pd.DataFrame(columns=['날짜', 'Category', '수량'])
-                
+
                 if filter_opt != "전체": df_skeleton = df_skeleton[df_skeleton['Category'] == filter_opt]
                 final_df = pd.merge(df_skeleton, real_sum, on=['날짜', 'Category'], how='left', suffixes=('_base', '_real'))
                 final_df['수량'] = final_df['수량_real'].fillna(0)
@@ -307,9 +313,9 @@ if menu == "대시보드":
                 weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
                 final_df['요일'] = final_df['날짜_dt'].dt.dayofweek.map(weekday_map)
                 final_df['표시날짜'] = final_df['날짜_dt'].dt.strftime('%m-%d') + " " + final_df['요일']
-                
+
                 domain = ["KA", "KG", "KA반제품", "Compound", "기타"]
-                range_ = ["#1f77b4", "#ff7f0e", "#17becf", "#d62728", "#9467bd"] 
+                range_ = ["#1f77b4", "#ff7f0e", "#17becf", "#d62728", "#9467bd"]
                 chart = alt.Chart(final_df).mark_bar().encode(
                     x=alt.X('표시날짜', title='날짜 (요일)', axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('수량', title='생산량 (KG)'),
@@ -319,11 +325,10 @@ if menu == "대시보드":
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                # 🔥 [수정 및 강화] 최근 10일치 원재료 입고 리포트
                 st.markdown("---")
                 st.subheader("📥 최근 10일 원재료 입고 리포트")
-                
-                df_inbound_all = df_logs[df_logs['구분'] == '입고'].copy()
+
+                df_inbound_all = df_logs_dash[df_logs_dash['구분'] == '입고'].copy()
                 if not df_inbound_all.empty:
                     # 1. 실제 입고가 있었던 날짜들 중 최근 10일 추출
                     in_dates = sorted(df_inbound_all['날짜'].unique(), reverse=True)[:10]
