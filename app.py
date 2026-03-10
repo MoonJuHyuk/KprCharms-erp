@@ -1177,6 +1177,36 @@ elif menu == "📋 주간 회의 & 개선사항":
             if st.button("💾 변경사항 저장", type="primary", key="m1_save"):
                 save_meetings_edits(edited)
 
+        st.markdown("---")
+        with st.expander("🗑️ 안건 삭제"):
+            if df_view.empty:
+                st.info("삭제할 안건이 없습니다.")
+            else:
+                del_options = df_view['안건번호'].tolist()
+                del_id = st.selectbox("삭제할 안건번호 선택", del_options, key="m1_del_id")
+                sel_row = df_view[df_view['안건번호'] == del_id]
+                if not sel_row.empty:
+                    r = sel_row.iloc[0]
+                    st.warning(f"**{r.get('안건번호','')}** | {r.get('날짜','')} | {r.get('공장','')} | {r.get('담당자','')}\n\n{r.get('안건내용','')}")
+                if st.button("🗑️ 삭제 확인", type="primary", key="m1_del_btn"):
+                    if not sheet_meetings:
+                        st.error("시트 연결 실패")
+                    else:
+                        try:
+                            all_vals = sheet_meetings.get_all_values()
+                            if len(all_vals) > 1:
+                                headers = all_vals[0]
+                                df_all = pd.DataFrame(all_vals[1:], columns=headers)
+                                id_col = '안건번호' if '안건번호' in headers else 'ID'
+                                df_all = df_all[df_all[id_col].astype(str).str.strip() != str(del_id).strip()]
+                                write_data = [headers] + df_all.fillna('').astype(str).values.tolist()
+                                safe_sheet_replace(sheet_meetings, write_data)
+                                st.success(f"삭제 완료: {del_id}")
+                                st.cache_data.clear()
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"삭제 실패: {e}")
+
     with tab_m2:
         with st.form("new_mtg"):
             r1, r2 = st.columns(2)
