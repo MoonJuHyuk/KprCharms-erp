@@ -353,6 +353,75 @@ if menu == "대시보드":
                 else:
                     st.info("입고 데이터가 존재하지 않습니다.")
 
+                st.markdown("---")
+                st.subheader("🚚 출고량 분석 (제품군별)")
+
+                df_outbound_all = df_logs_dash[df_logs_dash['구분'] == '출고'].copy()
+
+                # 출고량 전용 날짜 필터
+                out_c1, out_c2 = st.columns([2, 1])
+                with out_c1:
+                    out_default_end = target_dt_obj
+                    out_default_start = out_default_end - datetime.timedelta(days=6)
+                    out_range = st.date_input("출고 조회 기간", [out_default_start, out_default_end], key="out_range")
+                with out_c2:
+                    out_filter = st.selectbox("출고 품목 필터", ["전체", "KA", "KG", "KA반제품", "Compound"], key="out_filter")
+
+                if len(out_range) == 2:
+                    o_s, o_e = out_range
+                    if not df_outbound_all.empty:
+                        df_outbound_all['날짜_dt'] = pd.to_datetime(df_outbound_all['날짜'], errors='coerce')
+                        df_out_range = df_outbound_all[
+                            (df_outbound_all['날짜_dt'].dt.date >= o_s) &
+                            (df_outbound_all['날짜_dt'].dt.date <= o_e)
+                        ].copy()
+
+                        if not df_out_range.empty:
+                            # 출고 수량은 음수로 저장되므로 절댓값으로 변환
+                            df_out_range['수량'] = df_out_range['수량'].abs()
+                            df_out_range['Category'] = df_out_range.apply(get_product_category, axis=1)
+                            if out_filter != "전체":
+                                df_out_range = df_out_range[df_out_range['Category'] == out_filter]
+
+                        total_out = df_out_range['수량'].sum() if not df_out_range.empty else 0
+                        st.markdown(f"**📦 조회 기간 총 출고량: {total_out:,.0f} kg**")
+
+                        if not df_out_range.empty:
+                            df_out_range['날짜'] = df_out_range['날짜_dt'].dt.strftime('%Y-%m-%d')
+                            out_real = df_out_range.groupby(['날짜', 'Category'])['수량'].sum().reset_index()
+                            # 출고량이 0인 날짜 제거 - 실제 출고가 있는 날짜만
+                            active_dates = out_real[out_real['수량'] > 0]['날짜'].unique()
+                            df_out_final = out_real[out_real['날짜'].isin(active_dates)].copy()
+                            df_out_final['날짜_dt'] = pd.to_datetime(df_out_final['날짜'])
+                            weekday_map = {0:'(월)', 1:'(화)', 2:'(수)', 3:'(목)', 4:'(금)', 5:'(토)', 6:'(일)'}
+                            df_out_final['요일'] = df_out_final['날짜_dt'].dt.dayofweek.map(weekday_map)
+                            df_out_final['표시날짜'] = df_out_final['날짜_dt'].dt.strftime('%m-%d') + " " + df_out_final['요일']
+
+                            # X축 날짜 순서 (왼쪽=오래된 날짜, 오른쪽=최신)
+                            date_order = df_out_final.sort_values('날짜_dt')['표시날짜'].unique().tolist()
+
+                            out_domain = ["KA", "KG", "KA반제품", "Compound", "기타"]
+                            out_range_colors = ["#1f77b4", "#ff7f0e", "#17becf", "#d62728", "#9467bd"]
+                            out_chart = alt.Chart(df_out_final).mark_bar().encode(
+                                x=alt.X('표시날짜:N', title='출고일 (요일)',
+                                        sort=date_order,
+                                        axis=alt.Axis(labelAngle=0)),
+                                y=alt.Y('수량:Q', title='출고량 (KG)'),
+                                color=alt.Color('Category:N', scale=alt.Scale(domain=out_domain, range=out_range_colors), title='제품군'),
+                                xOffset='Category:N',
+                                tooltip=['표시날짜', 'Category', alt.Tooltip('수량', format=',.0f', title='출고량')]
+                            ).properties(height=350)
+                            st.altair_chart(out_chart, use_container_width=True)
+
+                            st.markdown("##### 📋 상세 출고 내역")
+                            out_cols = [c for c in ['날짜', '시간', '코드', '품목명', '규격', '수량', '비고'] if c in df_out_range.columns]
+                            df_out_table = df_out_range[out_cols].sort_values(['날짜'] + (['시간'] if '시간' in out_cols else []), ascending=False)
+                            st.dataframe(df_out_table, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("해당 기간에 출고 내역이 없습니다.")
+                    else:
+                        st.info("출고 데이터가 존재하지 않습니다.")
+
             else: st.info("기간을 선택해주세요.")
     else: st.info("데이터를 불러오는 중입니다...")
 
