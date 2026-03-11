@@ -1,5 +1,6 @@
 # 민감한 파일
 key.json
+.streamlit/secrets.toml
 *.json
 !package.json
 

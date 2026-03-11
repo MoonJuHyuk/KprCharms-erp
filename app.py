@@ -207,7 +207,8 @@ if not st.session_state["authenticated"]:
     with c1:
         pwd_input = st.text_input("접속 암호", type="password")
         if st.button("로그인", type="primary"):
-            if pwd_input == "kpr1234":
+            correct_pw = st.secrets.get("app_password", "kpr1234")
+            if pwd_input == correct_pw:
                 st.session_state["authenticated"] = True; st.rerun()
             else: st.error("암호가 틀렸습니다.")
     st.stop()
