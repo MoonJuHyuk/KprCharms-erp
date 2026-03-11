@@ -66,9 +66,10 @@ def get_all_sheets():
         return (None,) * 7
     ww_h = ['날짜', '대표자', '환경기술인', '가동시간', '플라스틱재생칩', '합성수지', '안료', '용수사용량', '폐수발생량', '위탁량', '기타']
     mtg_h = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
+    cfg_h = ['key', 'value']
     configs = [
         ('Items', None), ('Inventory', None), ('Logs', None), ('BOM', None), ('Orders', None),
-        ('Wastewater', ww_h), ('Meetings', mtg_h),
+        ('Wastewater', ww_h), ('Meetings', mtg_h), ('Config', cfg_h),
     ]
     result = []
     for name, headers in configs:
@@ -84,12 +85,25 @@ def get_all_sheets():
             try:
                 ws = d.add_worksheet(title=name, rows="1000", cols="20")
                 ws.append_row(headers)
+                if name == 'Config':
+                    ws.append_row(['app_password', 'kpr1234'])
             except Exception:
                 ws = None
         result.append(ws)
     return tuple(result)
 
-sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders, sheet_wastewater, sheet_meetings = get_all_sheets()
+sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders, sheet_wastewater, sheet_meetings, sheet_config = get_all_sheets()
+
+def get_app_password():
+    if sheet_config:
+        try:
+            records = sheet_config.get_all_records()
+            for row in records:
+                if row.get('key') == 'app_password':
+                    return str(row.get('value', ''))
+        except Exception:
+            pass
+    return ''
 
 # --- 3. 데이터 로딩 ---
 @st.cache_data(ttl=60)
@@ -207,8 +221,7 @@ if not st.session_state["authenticated"]:
     with c1:
         pwd_input = st.text_input("접속 암호", type="password")
         if st.button("로그인", type="primary"):
-            correct_pw = st.secrets.get("app_password", "kpr1234")
-            if pwd_input == correct_pw:
+            if pwd_input == get_app_password():
                 st.session_state["authenticated"] = True; st.rerun()
             else: st.error("암호가 틀렸습니다.")
     st.stop()
