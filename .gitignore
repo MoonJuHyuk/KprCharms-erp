@@ -1,0 +1,24 @@
+# 민감한 파일
+key.json
+*.json
+!package.json
+
+# 환경 변수
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# 백업 파일
+*_backup.py
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
