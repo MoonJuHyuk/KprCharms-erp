@@ -259,7 +259,7 @@ with st.sidebar:
     else: st.header("🏭 KPR / Chamstek")
     if st.button("🔄 새로고침"): st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
     st.markdown("---")
-    menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색", "🌊 환경/폐수 일지", "📋 주간 회의 & 개선사항"])
+    menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "📋 재고실사", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색", "🌊 환경/폐수 일지", "📋 주간 회의 & 개선사항"])
     st.markdown("---")
     date = st.date_input("날짜", datetime.datetime.now())
     time_str = datetime.datetime.now().strftime("%H:%M:%S")
@@ -1131,6 +1131,98 @@ elif menu == "영업/출고 관리":
                     except Exception as e:
                         st.error(f"오류: {e}")
 
+
+elif menu == "📋 재고실사":
+    st.title("📋 재고실사")
+
+    # 필터
+    c_f1, c_f2 = st.columns(2)
+    fac_filter = c_f1.selectbox("공장", ["전체", "1공장", "2공장"], key="audit_fac")
+
+    # df_inventory에 구분 컬럼 추가 (df_items에서 merge)
+    df_inv_audit = df_inventory.copy()
+    if not df_inv_audit.empty and not df_items.empty and '코드' in df_inv_audit.columns and '코드' in df_items.columns:
+        df_inv_audit = df_inv_audit.merge(
+            df_items[['코드', '구분']].drop_duplicates('코드'), on='코드', how='left'
+        )
+        df_inv_audit['구분'] = df_inv_audit['구분'].fillna('기타')
+    elif not df_inv_audit.empty:
+        df_inv_audit['구분'] = '기타'
+
+    if fac_filter != "전체" and '공장' in df_inv_audit.columns:
+        df_inv_audit = df_inv_audit[df_inv_audit['공장'] == fac_filter]
+
+    gubun_options = ["전체"] + sorted(df_inv_audit['구분'].unique().tolist()) if not df_inv_audit.empty else ["전체"]
+    gubun_filter = c_f2.selectbox("품목구분", gubun_options, key="audit_gubun")
+    if gubun_filter != "전체":
+        df_inv_audit = df_inv_audit[df_inv_audit['구분'] == gubun_filter]
+
+    if df_inv_audit.empty:
+        st.info("표시할 재고 데이터가 없습니다.")
+    else:
+        display_cols = [c for c in ['공장', '코드', '품목명', '규격', '타입', '색상', '구분', '현재고'] if c in df_inv_audit.columns]
+        df_show = df_inv_audit[display_cols].copy().reset_index(drop=True)
+        df_show['현재고'] = df_show['현재고'].apply(safe_float)
+        df_show['실사수량'] = df_show['현재고']
+
+        col_cfg = {c: st.column_config.Column(disabled=True) for c in display_cols}
+        col_cfg['현재고'] = st.column_config.NumberColumn("현재고", disabled=True)
+        col_cfg['실사수량'] = st.column_config.NumberColumn("실사수량", min_value=0, disabled=False)
+
+        st.markdown("#### 전체 재고 목록 (실사수량 입력)")
+        edited = st.data_editor(df_show, column_config=col_cfg, use_container_width=True, hide_index=True, key="audit_editor")
+
+        # 차이 계산
+        edited = edited.copy()
+        edited['차이'] = edited['실사수량'].apply(safe_float) - edited['현재고'].apply(safe_float)
+        diff_df = edited[edited['차이'] != 0].copy().reset_index(drop=True)
+
+        st.markdown("---")
+        if not diff_df.empty:
+            st.markdown(f"#### 차이 항목 ({len(diff_df)}건)")
+            diff_df['사유'] = ''
+            diff_col_cfg = {}
+            for c in diff_df.columns:
+                if c == '사유':
+                    diff_col_cfg[c] = st.column_config.TextColumn("사유", disabled=False)
+                elif c in ['현재고', '실사수량', '차이']:
+                    diff_col_cfg[c] = st.column_config.NumberColumn(disabled=True)
+                else:
+                    diff_col_cfg[c] = st.column_config.Column(disabled=True)
+            diff_edited = st.data_editor(diff_df, column_config=diff_col_cfg, use_container_width=True, hide_index=True, key="audit_diff_editor")
+        else:
+            diff_edited = pd.DataFrame()
+            st.success("모든 항목의 실사수량이 현재고와 일치합니다.")
+
+        note_common = st.text_input("공통 비고", placeholder="전체 실사에 대한 공통 비고를 입력하세요", key="audit_note")
+
+        if st.button("✅ 실사 반영", type="primary"):
+            if diff_edited.empty:
+                st.info("차이 항목이 없어 반영할 내용이 없습니다.")
+            else:
+                try:
+                    today_str = datetime.date.today().strftime('%Y-%m-%d')
+                    inv_updates = []
+                    log_rows = []
+                    for _, row in diff_edited.iterrows():
+                        reason = str(row.get('사유', '')).strip()
+                        curr_q = safe_float(row['현재고'])
+                        real_q = safe_float(row['실사수량'])
+                        diff_qty = safe_float(row['차이'])
+                        note = f"전산:{curr_q:g}, 실사:{real_q:g}"
+                        if reason: note += f", 사유:{reason}"
+                        if note_common: note += f", 비고:{note_common}"
+                        row_factory = str(row.get('공장', factory))
+                        inv_updates.append((row_factory, row['코드'], diff_qty, row.get('품목명', '-'), '-', '-', '-'))
+                        log_rows.append([today_str, time_str, row_factory, "재고실사", row['코드'], row.get('품목명', '-'), "-", "-", "-", diff_qty, note, "-", "-"])
+                    update_inventory_batch(inv_updates)
+                    if log_rows:
+                        sheet_logs.append_rows(log_rows)
+                    st.success(f"✅ {len(diff_edited)}건 실사 반영 완료")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"실사 반영 오류: {e}")
 
 elif menu == "🌊 환경/폐수 일지":
     st.title("🌊 폐수배출시설 운영일지")
