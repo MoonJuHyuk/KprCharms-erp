@@ -1135,74 +1135,54 @@ elif menu == "영업/출고 관리":
 elif menu == "📋 재고실사":
     st.title("📋 재고실사")
 
-    # 필터
-    c_f1, c_f2 = st.columns(2)
-    fac_filter = c_f1.selectbox("공장", ["전체", "1공장", "2공장"], key="audit_fac")
+    tab_print, tab_input, tab_history = st.tabs(["🖨️ 실사표 인쇄", "📝 실사 입력", "📜 실사 이력"])
 
-    # df_inventory에 구분 컬럼 추가 (df_items에서 merge)
-    df_inv_audit = df_inventory.copy()
-    if not df_inv_audit.empty and not df_items.empty and '코드' in df_inv_audit.columns and '코드' in df_items.columns:
-        df_inv_audit = df_inv_audit.merge(
-            df_items[['코드', '구분']].drop_duplicates('코드'), on='코드', how='left'
-        )
-        df_inv_audit['구분'] = df_inv_audit['구분'].fillna('기타')
-    elif not df_inv_audit.empty:
-        df_inv_audit['구분'] = '기타'
+    # 공통: df_inventory에 구분 컬럼 추가
+    df_inv_base = df_inventory.copy()
+    if not df_inv_base.empty and not df_items.empty and '코드' in df_inv_base.columns and '코드' in df_items.columns:
+        df_inv_base = df_inv_base.merge(df_items[['코드', '구분']].drop_duplicates('코드'), on='코드', how='left')
+        df_inv_base['구분'] = df_inv_base['구분'].fillna('기타')
+    elif not df_inv_base.empty:
+        df_inv_base['구분'] = '기타'
 
-    if fac_filter != "전체" and '공장' in df_inv_audit.columns:
-        df_inv_audit = df_inv_audit[df_inv_audit['공장'] == fac_filter]
+    # ── 탭1: 인쇄 ──
+    with tab_print:
+        st.markdown("현재 필터 조건으로 실사표를 출력합니다. 담당자가 실사수량을 수기로 기입합니다.")
+        pf1, pf2 = st.columns(2)
+        p_fac = pf1.selectbox("공장", ["전체", "1공장", "2공장"], key="p_fac")
+        df_p = df_inv_base.copy()
+        if p_fac != "전체" and '공장' in df_p.columns: df_p = df_p[df_p['공장'] == p_fac]
+        p_gubun_opts = ["전체"] + sorted(df_p['구분'].unique().tolist()) if not df_p.empty else ["전체"]
+        p_gubun = pf2.selectbox("품목구분", p_gubun_opts, key="p_gubun")
+        if p_gubun != "전체": df_p = df_p[df_p['구분'] == p_gubun]
 
-    gubun_options = ["전체"] + sorted(df_inv_audit['구분'].unique().tolist()) if not df_inv_audit.empty else ["전체"]
-    gubun_filter = c_f2.selectbox("품목구분", gubun_options, key="audit_gubun")
-    if gubun_filter != "전체":
-        df_inv_audit = df_inv_audit[df_inv_audit['구분'] == gubun_filter]
-
-    if df_inv_audit.empty:
-        st.info("표시할 재고 데이터가 없습니다.")
-    else:
-        display_cols = [c for c in ['공장', '코드', '품목명', '규격', '타입', '색상', '구분', '현재고'] if c in df_inv_audit.columns]
-        df_show = df_inv_audit[display_cols].copy().reset_index(drop=True)
-        df_show['현재고'] = df_show['현재고'].apply(safe_float)
-
-        tab_print, tab_input = st.tabs(["🖨️ 실사표 인쇄", "📝 실사 입력"])
-
-        with tab_print:
-            st.markdown("현재 필터 조건으로 실사표를 출력합니다. 담당자가 실사수량을 수기로 기입합니다.")
-
+        if df_p.empty:
+            st.info("표시할 재고 데이터가 없습니다.")
+        else:
+            p_cols = [c for c in ['공장', '코드', '품목명', '규격', '타입', '색상', '현재고'] if c in df_p.columns]
+            df_p_show = df_p[p_cols].copy().reset_index(drop=True)
+            df_p_show['현재고'] = df_p_show['현재고'].apply(safe_float)
+            show_curr = st.checkbox("현재고 표시 (담당자 참고용)", value=True, key="p_show_curr")
+            print_cols = [c for c in ['코드', '품목명', '규격', '타입', '색상'] if c in df_p_show.columns]
+            print_cols_full = print_cols + (['현재고'] if show_curr else [])
             today_str_print = datetime.date.today().strftime('%Y년 %m월 %d일')
-            print_cols = [c for c in ['코드', '품목명', '규격', '타입', '색상'] if c in df_show.columns]
-
-            # 현재고 포함 여부 선택
-            show_curr = st.checkbox("현재고 표시 (담당자 참고용)", value=True, key="audit_print_show_curr")
-
-            if show_curr:
-                print_cols_full = print_cols + ['현재고']
-            else:
-                print_cols_full = print_cols
-
-            # 헤더 행
             header_cells = "<th style='width:35px'>No.</th>" + "".join(f"<th>{c}</th>" for c in print_cols_full) + "<th style='width:80px'>실사수량</th><th style='width:60px'>확인</th>"
-
-            # 데이터 행
             rows_html = ""
-            for i, (_, row) in enumerate(df_show.iterrows(), 1):
+            for i, (_, row) in enumerate(df_p_show.iterrows(), 1):
                 cells = f"<td style='text-align:center'>{i}</td>"
                 for c in print_cols_full:
-                    val = row.get(c, '')
-                    if c == '현재고':
-                        val = f"{safe_float(val):g}"
+                    val = f"{safe_float(row[c]):g}" if c == '현재고' else row.get(c, '')
                     cells += f"<td>{val}</td>"
                 cells += "<td></td><td></td>"
                 rows_html += f"<tr>{cells}</tr>"
-
             html_content = f"""
 <div style="font-family:'Malgun Gothic',sans-serif; padding:10px;">
   <h2 style="text-align:center; margin-bottom:6px; letter-spacing:4px;">재 고 실 사 표</h2>
   <table style="width:100%;border:none;border-collapse:collapse;margin-bottom:10px;font-size:12px;">
     <tr>
       <td style="border:none;">실사일자 : {today_str_print}</td>
-      <td style="border:none;text-align:center;">공장 : {fac_filter}</td>
-      <td style="border:none;text-align:right;">품목구분 : {gubun_filter}</td>
+      <td style="border:none;text-align:center;">공장 : {p_fac}</td>
+      <td style="border:none;text-align:right;">품목구분 : {p_gubun}</td>
     </tr>
   </table>
   <table style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -1217,52 +1197,52 @@ elif menu == "📋 재고실사":
     </tr>
   </table>
 </div>"""
-
             st.components.v1.html(create_print_button(html_content, "재고실사표", "portrait"), height=55)
+            st.markdown(f"**미리보기** — 총 {len(df_p_show)}건")
+            prev = df_p_show[print_cols_full].copy()
+            if '현재고' in prev.columns: prev['현재고'] = prev['현재고'].apply(lambda v: f"{v:g}")
+            prev['실사수량'] = ''
+            st.dataframe(prev, use_container_width=True, hide_index=False)
 
-            # 미리보기
-            st.markdown(f"**미리보기** — 총 {len(df_show)}건")
-            preview_df = df_show[print_cols_full].copy()
-            if '현재고' in preview_df.columns:
-                preview_df['현재고'] = preview_df['현재고'].apply(lambda v: f"{v:g}")
-            preview_df['실사수량'] = ''
-            st.dataframe(preview_df, use_container_width=True, hide_index=False)
+    # ── 탭2: 입력 ──
+    with tab_input:
+        if1, if2 = st.columns(2)
+        i_fac = if1.selectbox("공장", ["전체", "1공장", "2공장"], key="i_fac")
+        df_i = df_inv_base.copy()
+        if i_fac != "전체" and '공장' in df_i.columns: df_i = df_i[df_i['공장'] == i_fac]
+        i_gubun_opts = ["전체"] + sorted(df_i['구분'].unique().tolist()) if not df_i.empty else ["전체"]
+        i_gubun = if2.selectbox("품목구분", i_gubun_opts, key="i_gubun")
+        if i_gubun != "전체": df_i = df_i[df_i['구분'] == i_gubun]
 
-        with tab_input:
-            df_show_edit = df_show.copy()
+        if df_i.empty:
+            st.info("표시할 재고 데이터가 없습니다.")
+        else:
+            display_cols = [c for c in ['공장', '코드', '품목명', '규격', '타입', '색상', '구분', '현재고'] if c in df_i.columns]
+            df_show_edit = df_i[display_cols].copy().reset_index(drop=True)
+            df_show_edit['현재고'] = df_show_edit['현재고'].apply(safe_float)
             df_show_edit['실사수량'] = df_show_edit['현재고']
-
             col_cfg = {c: st.column_config.Column(disabled=True) for c in display_cols}
             col_cfg['현재고'] = st.column_config.NumberColumn("현재고", disabled=True)
             col_cfg['실사수량'] = st.column_config.NumberColumn("실사수량", min_value=0, disabled=False)
-
             st.markdown("#### 재고 목록 (실사수량 입력)")
             edited = st.data_editor(df_show_edit, column_config=col_cfg, use_container_width=True, hide_index=True, key="audit_editor")
-
-            # 차이 계산
             edited = edited.copy()
             edited['차이'] = edited['실사수량'].apply(safe_float) - edited['현재고'].apply(safe_float)
             diff_df = edited[edited['차이'] != 0].copy().reset_index(drop=True)
-
             st.markdown("---")
             if not diff_df.empty:
                 st.markdown(f"#### 차이 항목 ({len(diff_df)}건)")
                 diff_df['사유'] = ''
                 diff_col_cfg = {}
                 for c in diff_df.columns:
-                    if c == '사유':
-                        diff_col_cfg[c] = st.column_config.TextColumn("사유", disabled=False)
-                    elif c in ['현재고', '실사수량', '차이']:
-                        diff_col_cfg[c] = st.column_config.NumberColumn(disabled=True)
-                    else:
-                        diff_col_cfg[c] = st.column_config.Column(disabled=True)
+                    if c == '사유': diff_col_cfg[c] = st.column_config.TextColumn("사유", disabled=False)
+                    elif c in ['현재고', '실사수량', '차이']: diff_col_cfg[c] = st.column_config.NumberColumn(disabled=True)
+                    else: diff_col_cfg[c] = st.column_config.Column(disabled=True)
                 diff_edited = st.data_editor(diff_df, column_config=diff_col_cfg, use_container_width=True, hide_index=True, key="audit_diff_editor")
             else:
                 diff_edited = pd.DataFrame()
                 st.success("모든 항목의 실사수량이 현재고와 일치합니다.")
-
             note_common = st.text_input("공통 비고", placeholder="전체 실사에 대한 공통 비고를 입력하세요", key="audit_note")
-
             if st.button("✅ 실사 반영", type="primary"):
                 if diff_edited.empty:
                     st.info("차이 항목이 없어 반영할 내용이 없습니다.")
@@ -1283,13 +1263,130 @@ elif menu == "📋 재고실사":
                             inv_updates.append((row_factory, row['코드'], diff_qty, row.get('품목명', '-'), '-', '-', '-'))
                             log_rows.append([today_str, time_str, row_factory, "재고실사", row['코드'], row.get('품목명', '-'), "-", "-", "-", diff_qty, note, "-", "-"])
                         update_inventory_batch(inv_updates)
-                        if log_rows:
-                            sheet_logs.append_rows(log_rows)
+                        if log_rows: sheet_logs.append_rows(log_rows)
                         st.success(f"✅ {len(diff_edited)}건 실사 반영 완료")
-                        st.cache_data.clear()
-                        st.rerun()
+                        st.cache_data.clear(); st.rerun()
                     except Exception as e:
                         st.error(f"실사 반영 오류: {e}")
+
+    # ── 탭3: 이력 ──
+    with tab_history:
+        st.markdown("### 📜 실사 이력 조회")
+
+        def parse_audit_note(note_str):
+            """비고 필드 파싱: '전산:100, 실사:90, 사유:출고누락, 비고:1분기' → dict"""
+            result = {'전산': None, '실사': None, '사유': '', '공통비고': ''}
+            for part in str(note_str).split(', '):
+                if ':' in part:
+                    k, v = part.split(':', 1)
+                    k = k.strip()
+                    if k == '전산': result['전산'] = safe_float(v)
+                    elif k == '실사': result['실사'] = safe_float(v)
+                    elif k == '사유': result['사유'] = v.strip()
+                    elif k == '비고': result['공통비고'] = v.strip()
+            return result
+
+        if df_logs.empty or '구분' not in df_logs.columns:
+            st.info("실사 이력이 없습니다.")
+        else:
+            df_audit_logs = df_logs[df_logs['구분'] == '재고실사'].copy()
+            if df_audit_logs.empty:
+                st.info("아직 실사 반영 기록이 없습니다.")
+            else:
+                df_audit_logs['날짜'] = df_audit_logs['날짜'].astype(str)
+                df_audit_logs['시간'] = df_audit_logs['시간'].astype(str) if '시간' in df_audit_logs.columns else ''
+
+                # 날짜 필터
+                hc1, hc2, hc3 = st.columns(3)
+                min_date = pd.to_datetime(df_audit_logs['날짜']).min().date()
+                h_start = hc1.date_input("시작일", min_date, key="h_start")
+                h_end = hc2.date_input("종료일", datetime.date.today(), key="h_end")
+                h_fac = hc3.selectbox("공장", ["전체"] + sorted(df_audit_logs['공장'].unique().tolist()) if '공장' in df_audit_logs.columns else ["전체"], key="h_fac")
+
+                mask = (pd.to_datetime(df_audit_logs['날짜']).dt.date >= h_start) & (pd.to_datetime(df_audit_logs['날짜']).dt.date <= h_end)
+                df_audit_logs = df_audit_logs[mask]
+                if h_fac != "전체" and '공장' in df_audit_logs.columns:
+                    df_audit_logs = df_audit_logs[df_audit_logs['공장'] == h_fac]
+
+                if df_audit_logs.empty:
+                    st.info("해당 기간에 실사 기록이 없습니다.")
+                else:
+                    # 회차 그룹: (날짜, 시간) 조합으로 식별
+                    df_audit_logs['회차키'] = df_audit_logs['날짜'] + ' ' + df_audit_logs['시간']
+                    sessions = df_audit_logs.groupby('회차키', sort=False)
+                    session_keys = sorted(df_audit_logs['회차키'].unique(), reverse=True)
+
+                    # ── 요약 테이블 ──
+                    summary_rows = []
+                    for sk in session_keys:
+                        sg = df_audit_logs[df_audit_logs['회차키'] == sk]
+                        # 공통비고는 첫 항목의 비고에서 파싱
+                        parsed0 = parse_audit_note(sg.iloc[0].get('비고', ''))
+                        summary_rows.append({
+                            '날짜': sg.iloc[0]['날짜'],
+                            '시간': sg.iloc[0]['시간'],
+                            '공장': sg.iloc[0].get('공장', '-'),
+                            '차이건수': len(sg),
+                            '총차이량': sg['수량'].apply(safe_float).sum(),
+                            '공통비고': parsed0['공통비고'],
+                            '회차키': sk,
+                        })
+                    df_summary = pd.DataFrame(summary_rows)
+                    st.markdown(f"#### 실사 회차 목록 (총 {len(df_summary)}회)")
+                    st.dataframe(df_summary[['날짜', '시간', '공장', '차이건수', '총차이량', '공통비고']], use_container_width=True, hide_index=True)
+
+                    # ── 회차 상세 ──
+                    st.markdown("---")
+                    st.markdown("#### 회차 상세 조회")
+                    sel_session = st.selectbox("회차 선택", session_keys, format_func=lambda x: x, key="h_sel_session")
+                    sg_detail = df_audit_logs[df_audit_logs['회차키'] == sel_session].copy()
+
+                    detail_rows = []
+                    for _, r in sg_detail.iterrows():
+                        parsed = parse_audit_note(r.get('비고', ''))
+                        detail_rows.append({
+                            '공장': r.get('공장', '-'),
+                            '코드': r.get('코드', '-'),
+                            '품목명': r.get('품목명', '-'),
+                            '전산재고': parsed['전산'],
+                            '실사수량': parsed['실사'],
+                            '차이': safe_float(r.get('수량', 0)),
+                            '사유': parsed['사유'],
+                            '공통비고': parsed['공통비고'],
+                        })
+                    df_detail = pd.DataFrame(detail_rows)
+                    st.dataframe(df_detail, use_container_width=True, hide_index=True)
+
+                    # ── 반복 차이 품목 분석 ──
+                    st.markdown("---")
+                    st.markdown("#### 반복 차이 품목 분석")
+                    st.caption("여러 실사 회차에서 반복적으로 차이가 발생한 품목입니다. 구조적 원인 파악이 필요합니다.")
+
+                    repeat_rows = []
+                    for _, r in df_audit_logs.iterrows():
+                        parsed = parse_audit_note(r.get('비고', ''))
+                        repeat_rows.append({
+                            '코드': r.get('코드', '-'),
+                            '품목명': r.get('품목명', '-'),
+                            '공장': r.get('공장', '-'),
+                            '날짜': r.get('날짜', '-'),
+                            '차이': safe_float(r.get('수량', 0)),
+                            '사유': parsed['사유'],
+                        })
+                    df_repeat = pd.DataFrame(repeat_rows)
+                    freq = df_repeat.groupby(['코드', '품목명', '공장']).agg(
+                        발생횟수=('날짜', 'count'),
+                        누적차이=('차이', 'sum'),
+                        최근날짜=('날짜', 'max'),
+                        주요사유=('사유', lambda x: ', '.join(sorted(set(v for v in x if v))))
+                    ).reset_index().sort_values('발생횟수', ascending=False)
+
+                    repeat_only = freq[freq['발생횟수'] >= 2]
+                    if repeat_only.empty:
+                        st.success("반복 차이 품목이 없습니다.")
+                    else:
+                        st.warning(f"⚠️ {len(repeat_only)}개 품목에서 반복 차이 발생")
+                        st.dataframe(repeat_only, use_container_width=True, hide_index=True)
 
 elif menu == "🌊 환경/폐수 일지":
     st.title("🌊 폐수배출시설 운영일지")
