@@ -1163,66 +1163,133 @@ elif menu == "📋 재고실사":
         display_cols = [c for c in ['공장', '코드', '품목명', '규격', '타입', '색상', '구분', '현재고'] if c in df_inv_audit.columns]
         df_show = df_inv_audit[display_cols].copy().reset_index(drop=True)
         df_show['현재고'] = df_show['현재고'].apply(safe_float)
-        df_show['실사수량'] = df_show['현재고']
 
-        col_cfg = {c: st.column_config.Column(disabled=True) for c in display_cols}
-        col_cfg['현재고'] = st.column_config.NumberColumn("현재고", disabled=True)
-        col_cfg['실사수량'] = st.column_config.NumberColumn("실사수량", min_value=0, disabled=False)
+        tab_print, tab_input = st.tabs(["🖨️ 실사표 인쇄", "📝 실사 입력"])
 
-        st.markdown("#### 전체 재고 목록 (실사수량 입력)")
-        edited = st.data_editor(df_show, column_config=col_cfg, use_container_width=True, hide_index=True, key="audit_editor")
+        with tab_print:
+            st.markdown("현재 필터 조건으로 실사표를 출력합니다. 담당자가 실사수량을 수기로 기입합니다.")
 
-        # 차이 계산
-        edited = edited.copy()
-        edited['차이'] = edited['실사수량'].apply(safe_float) - edited['현재고'].apply(safe_float)
-        diff_df = edited[edited['차이'] != 0].copy().reset_index(drop=True)
+            today_str_print = datetime.date.today().strftime('%Y년 %m월 %d일')
+            print_cols = [c for c in ['코드', '품목명', '규격', '타입', '색상'] if c in df_show.columns]
 
-        st.markdown("---")
-        if not diff_df.empty:
-            st.markdown(f"#### 차이 항목 ({len(diff_df)}건)")
-            diff_df['사유'] = ''
-            diff_col_cfg = {}
-            for c in diff_df.columns:
-                if c == '사유':
-                    diff_col_cfg[c] = st.column_config.TextColumn("사유", disabled=False)
-                elif c in ['현재고', '실사수량', '차이']:
-                    diff_col_cfg[c] = st.column_config.NumberColumn(disabled=True)
-                else:
-                    diff_col_cfg[c] = st.column_config.Column(disabled=True)
-            diff_edited = st.data_editor(diff_df, column_config=diff_col_cfg, use_container_width=True, hide_index=True, key="audit_diff_editor")
-        else:
-            diff_edited = pd.DataFrame()
-            st.success("모든 항목의 실사수량이 현재고와 일치합니다.")
+            # 현재고 포함 여부 선택
+            show_curr = st.checkbox("현재고 표시 (담당자 참고용)", value=True, key="audit_print_show_curr")
 
-        note_common = st.text_input("공통 비고", placeholder="전체 실사에 대한 공통 비고를 입력하세요", key="audit_note")
-
-        if st.button("✅ 실사 반영", type="primary"):
-            if diff_edited.empty:
-                st.info("차이 항목이 없어 반영할 내용이 없습니다.")
+            if show_curr:
+                print_cols_full = print_cols + ['현재고']
             else:
-                try:
-                    today_str = datetime.date.today().strftime('%Y-%m-%d')
-                    inv_updates = []
-                    log_rows = []
-                    for _, row in diff_edited.iterrows():
-                        reason = str(row.get('사유', '')).strip()
-                        curr_q = safe_float(row['현재고'])
-                        real_q = safe_float(row['실사수량'])
-                        diff_qty = safe_float(row['차이'])
-                        note = f"전산:{curr_q:g}, 실사:{real_q:g}"
-                        if reason: note += f", 사유:{reason}"
-                        if note_common: note += f", 비고:{note_common}"
-                        row_factory = str(row.get('공장', factory))
-                        inv_updates.append((row_factory, row['코드'], diff_qty, row.get('품목명', '-'), '-', '-', '-'))
-                        log_rows.append([today_str, time_str, row_factory, "재고실사", row['코드'], row.get('품목명', '-'), "-", "-", "-", diff_qty, note, "-", "-"])
-                    update_inventory_batch(inv_updates)
-                    if log_rows:
-                        sheet_logs.append_rows(log_rows)
-                    st.success(f"✅ {len(diff_edited)}건 실사 반영 완료")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"실사 반영 오류: {e}")
+                print_cols_full = print_cols
+
+            # 헤더 행
+            header_cells = "<th style='width:35px'>No.</th>" + "".join(f"<th>{c}</th>" for c in print_cols_full) + "<th style='width:80px'>실사수량</th><th style='width:60px'>확인</th>"
+
+            # 데이터 행
+            rows_html = ""
+            for i, (_, row) in enumerate(df_show.iterrows(), 1):
+                cells = f"<td style='text-align:center'>{i}</td>"
+                for c in print_cols_full:
+                    val = row.get(c, '')
+                    if c == '현재고':
+                        val = f"{safe_float(val):g}"
+                    cells += f"<td>{val}</td>"
+                cells += "<td></td><td></td>"
+                rows_html += f"<tr>{cells}</tr>"
+
+            html_content = f"""
+<div style="font-family:'Malgun Gothic',sans-serif; padding:10px;">
+  <h2 style="text-align:center; margin-bottom:6px; letter-spacing:4px;">재 고 실 사 표</h2>
+  <table style="width:100%;border:none;border-collapse:collapse;margin-bottom:10px;font-size:12px;">
+    <tr>
+      <td style="border:none;">실사일자 : {today_str_print}</td>
+      <td style="border:none;text-align:center;">공장 : {fac_filter}</td>
+      <td style="border:none;text-align:right;">품목구분 : {gubun_filter}</td>
+    </tr>
+  </table>
+  <table style="width:100%;border-collapse:collapse;font-size:11px;">
+    <thead><tr style="background:#e8e8e8;font-weight:bold;">{header_cells}</tr></thead>
+    <tbody>{rows_html}</tbody>
+  </table>
+  <table style="width:100%;border:none;border-collapse:collapse;margin-top:30px;font-size:12px;">
+    <tr>
+      <td style="border:none;width:30%;padding-top:10px;">담&nbsp;&nbsp;당&nbsp;&nbsp;자 : _______________</td>
+      <td style="border:none;width:30%;padding-top:10px;">확&nbsp;&nbsp;인&nbsp;&nbsp;자 : _______________</td>
+      <td style="border:none;width:40%;"></td>
+    </tr>
+  </table>
+</div>"""
+
+            st.components.v1.html(create_print_button(html_content, "재고실사표", "portrait"), height=55)
+
+            # 미리보기
+            st.markdown(f"**미리보기** — 총 {len(df_show)}건")
+            preview_df = df_show[print_cols_full].copy()
+            if '현재고' in preview_df.columns:
+                preview_df['현재고'] = preview_df['현재고'].apply(lambda v: f"{v:g}")
+            preview_df['실사수량'] = ''
+            st.dataframe(preview_df, use_container_width=True, hide_index=False)
+
+        with tab_input:
+            df_show_edit = df_show.copy()
+            df_show_edit['실사수량'] = df_show_edit['현재고']
+
+            col_cfg = {c: st.column_config.Column(disabled=True) for c in display_cols}
+            col_cfg['현재고'] = st.column_config.NumberColumn("현재고", disabled=True)
+            col_cfg['실사수량'] = st.column_config.NumberColumn("실사수량", min_value=0, disabled=False)
+
+            st.markdown("#### 재고 목록 (실사수량 입력)")
+            edited = st.data_editor(df_show_edit, column_config=col_cfg, use_container_width=True, hide_index=True, key="audit_editor")
+
+            # 차이 계산
+            edited = edited.copy()
+            edited['차이'] = edited['실사수량'].apply(safe_float) - edited['현재고'].apply(safe_float)
+            diff_df = edited[edited['차이'] != 0].copy().reset_index(drop=True)
+
+            st.markdown("---")
+            if not diff_df.empty:
+                st.markdown(f"#### 차이 항목 ({len(diff_df)}건)")
+                diff_df['사유'] = ''
+                diff_col_cfg = {}
+                for c in diff_df.columns:
+                    if c == '사유':
+                        diff_col_cfg[c] = st.column_config.TextColumn("사유", disabled=False)
+                    elif c in ['현재고', '실사수량', '차이']:
+                        diff_col_cfg[c] = st.column_config.NumberColumn(disabled=True)
+                    else:
+                        diff_col_cfg[c] = st.column_config.Column(disabled=True)
+                diff_edited = st.data_editor(diff_df, column_config=diff_col_cfg, use_container_width=True, hide_index=True, key="audit_diff_editor")
+            else:
+                diff_edited = pd.DataFrame()
+                st.success("모든 항목의 실사수량이 현재고와 일치합니다.")
+
+            note_common = st.text_input("공통 비고", placeholder="전체 실사에 대한 공통 비고를 입력하세요", key="audit_note")
+
+            if st.button("✅ 실사 반영", type="primary"):
+                if diff_edited.empty:
+                    st.info("차이 항목이 없어 반영할 내용이 없습니다.")
+                else:
+                    try:
+                        today_str = datetime.date.today().strftime('%Y-%m-%d')
+                        inv_updates = []
+                        log_rows = []
+                        for _, row in diff_edited.iterrows():
+                            reason = str(row.get('사유', '')).strip()
+                            curr_q = safe_float(row['현재고'])
+                            real_q = safe_float(row['실사수량'])
+                            diff_qty = safe_float(row['차이'])
+                            note = f"전산:{curr_q:g}, 실사:{real_q:g}"
+                            if reason: note += f", 사유:{reason}"
+                            if note_common: note += f", 비고:{note_common}"
+                            row_factory = str(row.get('공장', factory))
+                            inv_updates.append((row_factory, row['코드'], diff_qty, row.get('품목명', '-'), '-', '-', '-'))
+                            log_rows.append([today_str, time_str, row_factory, "재고실사", row['코드'], row.get('품목명', '-'), "-", "-", "-", diff_qty, note, "-", "-"])
+                        update_inventory_batch(inv_updates)
+                        if log_rows:
+                            sheet_logs.append_rows(log_rows)
+                        st.success(f"✅ {len(diff_edited)}건 실사 반영 완료")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"실사 반영 오류: {e}")
 
 elif menu == "🌊 환경/폐수 일지":
     st.title("🌊 폐수배출시설 운영일지")
