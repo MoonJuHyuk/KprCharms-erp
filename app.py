@@ -154,6 +154,30 @@ def safe_sheet_replace(sheet, new_data):
         raise e
 
 # --- 4. 재고 업데이트 ---
+def update_inventory_batch(updates):
+    """여러 재고 변경을 한 번의 API 호출로 처리. updates: [(factory, code, qty, p_name, p_spec, p_type, p_color), ...]"""
+    if not sheet_inventory or not updates: return
+    try:
+        all_values = sheet_inventory.get_all_values()
+        cell_updates = []
+        append_rows_list = []
+        for factory, code, qty, p_name, p_spec, p_type, p_color in updates:
+            found = False
+            for row_idx, row in enumerate(all_values[1:], start=2):
+                if len(row) > 1 and str(row[1]) == str(code):
+                    curr = safe_float(row[6]) if len(row) > 6 else 0.0
+                    cell_updates.append({'range': f'G{row_idx}', 'values': [[curr + qty]]})
+                    row[6] = str(curr + qty)  # 같은 코드 중복 처리용 로컬 반영
+                    found = True
+                    break
+            if not found:
+                append_rows_list.append([factory, code, p_name, p_spec, p_type, p_color, qty])
+        if cell_updates:
+            sheet_inventory.batch_update(cell_updates)
+        for row in append_rows_list:
+            sheet_inventory.append_row(row)
+    except: pass
+
 def update_inventory(factory, code, qty, p_name="-", p_spec="-", p_type="-", p_color="-", p_unit="-"):
     if not sheet_inventory: return
     try:
@@ -1051,9 +1075,10 @@ elif menu == "영업/출고 관리":
                 st.dataframe(d_out[['코드','품목명','수량','팔레트번호']], use_container_width=True)
                 if st.button("🚀 출고 확정", type="primary"):
                     try:
-                        for _, row in d_out.iterrows():
-                            update_inventory(factory, row['코드'], -safe_float(row['수량']))
-                            sheet_logs.append_row([datetime.date.today().strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], row['품목명'], "-", "-", "-", -safe_float(row['수량']), f"주문출고({tgt_out})", row['거래처'], "-"])
+                        inv_updates = [(factory, row['코드'], -safe_float(row['수량']), row.get('품목명', '-'), '-', '-', '-') for _, row in d_out.iterrows()]
+                        update_inventory_batch(inv_updates)
+                        log_rows = [[datetime.date.today().strftime('%Y-%m-%d'), time_str, factory, "출고", row['코드'], row['품목명'], "-", "-", "-", -safe_float(row['수량']), f"주문출고({tgt_out})", row['거래처'], "-"] for _, row in d_out.iterrows()]
+                        sheet_logs.append_rows(log_rows)
                         all_rec = sheet_orders.get_all_records()
                         hd = sheet_orders.row_values(1)
                         upd = [hd] + [
@@ -1089,14 +1114,10 @@ elif menu == "영업/출고 관리":
                 if st.button("↩️ 출고 취소 확정", type="primary", key="cancel_confirm"):
                     try:
                         # 재고 복구 (출고 차감분 원복)
-                        for _, row in d_cancel.iterrows():
-                            update_inventory(factory, row['코드'], safe_float(row['수량']),
-                                row['품목명'], "-", "-", "-")
-                            sheet_logs.append_row([
-                                datetime.date.today().strftime('%Y-%m-%d'), time_str, factory,
-                                "출고취소", row['코드'], row['품목명'], "-", "-", "-",
-                                safe_float(row['수량']), f"출고취소({tgt_cancel})", row['거래처'], "-"
-                            ])
+                        inv_updates_cancel = [(factory, row['코드'], safe_float(row['수량']), row['품목명'], '-', '-', '-') for _, row in d_cancel.iterrows()]
+                        update_inventory_batch(inv_updates_cancel)
+                        log_rows_cancel = [[datetime.date.today().strftime('%Y-%m-%d'), time_str, factory, "출고취소", row['코드'], row['품목명'], "-", "-", "-", safe_float(row['수량']), f"출고취소({tgt_cancel})", row['거래처'], "-"] for _, row in d_cancel.iterrows()]
+                        sheet_logs.append_rows(log_rows_cancel)
                         # Orders 상태를 '준비'로 복구
                         all_rec = sheet_orders.get_all_records()
                         hd = sheet_orders.row_values(1)
