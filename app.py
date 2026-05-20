@@ -629,18 +629,31 @@ elif menu == "재고/생산 관리":
                         st.session_state["edit_mode"] = True
                 
                 if st.session_state["edit_mode"]:
-                    st.info("💡 수정하면 기존 기록은 삭제되고, 새로운 내용으로 다시 등록됩니다. (반제품 재고 자동 계산)")
+                    st.info("💡 수정하면 기존 기록은 삭제되고, 새로운 내용으로 다시 등록됩니다. 품목 변경 시 재고·BOM이 자동 교정됩니다.")
                     target_row_edit = df_prod_log[df_prod_log['No'] == sel_target_id].iloc[0]
                     with st.form("edit_form"):
+                        st.markdown("**품목 변경** (완제품 ↔ 반제품 포함)")
+                        df_edit_items = df_items[df_items['구분'].isin(['제품', '완제품', '반제품'])].copy() if not df_items.empty else pd.DataFrame()
+                        if not df_edit_items.empty:
+                            df_edit_items['_disp'] = df_edit_items['코드'].astype(str) + "  |  " + df_edit_items['품목명'].astype(str) + "  [" + df_edit_items['구분'].astype(str) + "]"
+                            disp_list = df_edit_items['_disp'].tolist()
+                            cur_code_str = str(target_row_edit['코드'])
+                            cur_match = df_edit_items[df_edit_items['코드'].astype(str) == cur_code_str]
+                            cur_disp_idx = disp_list.index(cur_match.iloc[0]['_disp']) if not cur_match.empty else 0
+                            sel_item_disp = st.selectbox("품목 선택", disp_list, index=cur_disp_idx)
+                            sel_new_code = sel_item_disp.split("  |  ")[0].strip()
+                            new_item_row = df_edit_items[df_edit_items['코드'].astype(str) == sel_new_code].iloc[0]
+                        else:
+                            sel_new_code = str(target_row_edit['코드'])
+                            new_item_row = target_row_edit
                         e_date = st.date_input("날짜", pd.to_datetime(target_row_edit['날짜']))
                         e_line = st.selectbox("라인", all_lines, index=all_lines.index(target_row_edit['라인']) if target_row_edit['라인'] in all_lines else 0)
                         e_qty = st.number_input("수량 (kg)", value=float(target_row_edit['수량']))
                         e_note = st.text_input("비고", value=target_row_edit['비고'])
-                        
+
                         if st.form_submit_button("✅ 수정사항 저장"):
                             old_date = target_row_edit['날짜']; old_time = target_row_edit['시간']; old_fac = target_row_edit['공장']; old_code = target_row_edit['코드']; old_qty = safe_float(target_row_edit['수량'])
                             update_inventory(old_fac, old_code, -old_qty)
-                            
                             linked_logs_old = df_logs[(df_logs['날짜'] == old_date) & (df_logs['시간'] == old_time) & (df_logs['구분'] == '사용(Auto)') & (df_logs['비고'].str.contains(str(old_code), na=False))]
                             rows_to_del_edit = [sel_target_id]
                             if not linked_logs_old.empty:
@@ -652,23 +665,114 @@ elif menu == "재고/생산 관리":
                             for r_idx in rows_to_del_edit:
                                 sheet_logs.delete_rows(int(r_idx))
                                 time.sleep(0.3)
-                            
-                            new_time_str = datetime.datetime.now().strftime("%H:%M:%S") 
-                            sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "생산", old_code, target_row_edit['품목명'], target_row_edit.get('규격',''), target_row_edit['타입'], target_row_edit.get('색상',''), e_qty, e_note, "-", e_line])
-                            update_inventory(old_fac, old_code, e_qty)
-                            
+                            new_time_str = datetime.datetime.now().strftime("%H:%M:%S")
+                            n_code = str(new_item_row['코드']); n_name = str(new_item_row['품목명']); n_spec = str(new_item_row.get('규격', '-')); n_type = str(new_item_row.get('타입', '-')); n_color = str(new_item_row.get('색상', '-'))
+                            sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "생산", n_code, n_name, n_spec, n_type, n_color, e_qty, e_note, "-", e_line])
+                            update_inventory(old_fac, n_code, e_qty, n_name, n_spec, n_type, n_color)
                             if not df_bom.empty:
-                                sel_type = target_row_edit['타입']
-                                if '타입' in df_bom.columns: bom_targets = df_bom[(df_bom['제품코드'].astype(str) == str(old_code)) & (df_bom['타입'].astype(str) == str(sel_type))].drop_duplicates(subset=['자재코드'])
-                                else: bom_targets = df_bom[df_bom['제품코드'].astype(str) == str(old_code)].drop_duplicates(subset=['자재코드'])
-                                for i,r in bom_targets.iterrows():
+                                if '타입' in df_bom.columns: bom_targets = df_bom[(df_bom['제품코드'].astype(str) == n_code) & (df_bom['타입'].astype(str) == n_type)].drop_duplicates(subset=['자재코드'])
+                                else: bom_targets = df_bom[df_bom['제품코드'].astype(str) == n_code].drop_duplicates(subset=['자재코드'])
+                                for i, r in bom_targets.iterrows():
                                     req = e_qty * safe_float(r['소요량'])
                                     update_inventory(old_fac, r['자재코드'], -req)
                                     time.sleep(0.3)
-                                    sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{old_code} 생산", "-", e_line])
-                            
+                                    sheet_logs.append_row([e_date.strftime('%Y-%m-%d'), new_time_str, old_fac, "사용(Auto)", r['자재코드'], "System", "-", "-", "-", -req, f"{n_code} 생산", "-", e_line])
                             st.session_state["edit_mode"] = False
                             st.success("수정 완료!"); time.sleep(1); st.cache_data.clear(); st.rerun()
+
+            st.markdown("---")
+            with st.expander("🔄 품목 일괄 변환 (완제품 ↔ 반제품 교정)", expanded=False):
+                st.warning("⚠️ 특정 기간의 생산 기록을 다른 품목으로 일괄 변환합니다. 재고와 BOM이 자동 교정됩니다.")
+                if df_items.empty:
+                    st.info("품목 데이터가 없습니다.")
+                else:
+                    df_conv_items = df_items[df_items['구분'].isin(['제품', '완제품', '반제품'])].copy()
+                    df_conv_items['_disp'] = df_conv_items['코드'].astype(str) + "  |  " + df_conv_items['품목명'].astype(str) + "  [" + df_conv_items['구분'].astype(str) + "]"
+                    bc1, bc2 = st.columns(2)
+                    from_disp = bc1.selectbox("변환 전 품목 (잘못 등록된)", df_conv_items['_disp'].tolist(), key="bulk_from")
+                    to_disp   = bc2.selectbox("변환 후 품목 (올바른 품목)", df_conv_items['_disp'].tolist(), key="bulk_to")
+                    bd1, bd2 = st.columns(2)
+                    bulk_start = bd1.date_input("시작일", datetime.date.today() - datetime.timedelta(days=14), key="bulk_sd")
+                    bulk_end   = bd2.date_input("종료일", datetime.date.today(), key="bulk_ed")
+                    from_code_bulk = from_disp.split("  |  ")[0].strip()
+                    from_name_bulk = from_disp.split("  |  ")[1].split("  [")[0].strip() if "  |  " in from_disp else from_code_bulk
+                    to_code_bulk   = to_disp.split("  |  ")[0].strip()
+
+                    df_bulk = df_prod_log.copy()
+                    df_bulk['_dt'] = pd.to_datetime(df_bulk['날짜'])
+                    df_bulk = df_bulk[
+                        (df_bulk['_dt'].dt.date >= bulk_start) & (df_bulk['_dt'].dt.date <= bulk_end) &
+                        ((df_bulk['코드'].astype(str).str.strip() == from_code_bulk) | (df_bulk['품목명'].astype(str).str.strip() == from_name_bulk))
+                    ]
+
+                    if df_bulk.empty:
+                        st.info(f"해당 기간에 '{from_name_bulk}' 생산 기록이 없습니다.")
+                    else:
+                        total_qty_bulk = df_bulk['수량'].apply(safe_float).sum()
+                        st.write(f"변환 대상: **{len(df_bulk)}건** / 총 {total_qty_bulk:,.0f} kg")
+                        preview_cols_bulk = [c for c in ['No', '날짜', '시간', '공장', '품목명', '수량', '비고'] if c in df_bulk.columns]
+                        st.dataframe(df_bulk[preview_cols_bulk].sort_values('날짜', ascending=False), use_container_width=True, hide_index=True)
+
+                        if from_code_bulk == to_code_bulk:
+                            st.error("변환 전/후 품목이 동일합니다.")
+                        else:
+                            to_item_bulk = df_conv_items[df_conv_items['코드'].astype(str) == to_code_bulk].iloc[0]
+                            if st.button("🔄 일괄 변환 실행", type="primary", key="bulk_exec"):
+                                prog = st.progress(0, text="변환 준비 중...")
+                                df_bulk_sorted = df_bulk.sort_values('No', ascending=False)
+                                records_info = []
+                                all_del_rows = []
+
+                                for _, rec in df_bulk_sorted.iterrows():
+                                    r_no   = int(rec['No'])
+                                    r_fac  = rec['공장']
+                                    r_date = str(rec['날짜'])
+                                    r_time = rec['시간']
+                                    r_qty  = safe_float(rec['수량'])
+                                    r_line = rec.get('라인', '-')
+                                    r_note = str(rec.get('비고', ''))
+                                    r_actual_code = str(rec['코드']).strip()
+                                    linked = df_logs[(df_logs['날짜'] == r_date) & (df_logs['시간'] == r_time) & (df_logs['구분'] == '사용(Auto)') & (df_logs['비고'].str.contains(r_actual_code, na=False))]
+                                    bom_info = [(int(i2) + 2, safe_float(r2['수량']), str(r2['코드'])) for i2, r2 in linked.iterrows()]
+                                    records_info.append({'fac': r_fac, 'date': r_date, 'time': r_time, 'qty': r_qty, 'line': r_line, 'note': r_note, 'bom': bom_info, 'actual_code': r_actual_code})
+                                    all_del_rows.append(r_no)
+                                    all_del_rows.extend([b[0] for b in bom_info])
+
+                                all_del_rows = sorted(set(all_del_rows), reverse=True)
+                                total_steps = len(all_del_rows) + len(records_info)
+                                step = 0
+
+                                for r_idx in all_del_rows:
+                                    sheet_logs.delete_rows(r_idx)
+                                    time.sleep(0.5)
+                                    step += 1
+                                    prog.progress(step / total_steps, text=f"기존 기록 삭제 중... ({step}/{len(all_del_rows)})")
+
+                                n_name_bulk = str(to_item_bulk['품목명']); n_spec_bulk = str(to_item_bulk.get('규격', '-')); n_type_bulk = str(to_item_bulk.get('타입', '-')); n_color_bulk = str(to_item_bulk.get('색상', '-'))
+                                if not df_bom.empty:
+                                    if '타입' in df_bom.columns: new_bom = df_bom[(df_bom['제품코드'].astype(str) == to_code_bulk) & (df_bom['타입'].astype(str) == n_type_bulk)].drop_duplicates(subset=['자재코드'])
+                                    else: new_bom = df_bom[df_bom['제품코드'].astype(str) == to_code_bulk].drop_duplicates(subset=['자재코드'])
+                                else:
+                                    new_bom = pd.DataFrame()
+
+                                for rec_d in records_info:
+                                    update_inventory(rec_d['fac'], rec_d['actual_code'], -rec_d['qty'])
+                                    for _, bom_qty, bom_code in rec_d['bom']:
+                                        update_inventory(rec_d['fac'], bom_code, -bom_qty)
+                                    new_ts = datetime.datetime.now().strftime("%H:%M:%S")
+                                    sheet_logs.append_row([rec_d['date'], new_ts, rec_d['fac'], "생산", to_code_bulk, n_name_bulk, n_spec_bulk, n_type_bulk, n_color_bulk, rec_d['qty'], rec_d['note'], "-", rec_d['line']])
+                                    update_inventory(rec_d['fac'], to_code_bulk, rec_d['qty'], n_name_bulk, n_spec_bulk, n_type_bulk, n_color_bulk)
+                                    for _, r_bom in new_bom.iterrows():
+                                        req = rec_d['qty'] * safe_float(r_bom['소요량'])
+                                        update_inventory(rec_d['fac'], r_bom['자재코드'], -req)
+                                        time.sleep(0.3)
+                                        sheet_logs.append_row([rec_d['date'], new_ts, rec_d['fac'], "사용(Auto)", r_bom['자재코드'], "System", "-", "-", "-", -req, f"{to_code_bulk} 생산", "-", rec_d['line']])
+                                    step += 1
+                                    prog.progress(step / total_steps, text=f"새 기록 등록 중... ({step - len(all_del_rows)}/{len(records_info)})")
+                                    time.sleep(0.5)
+
+                                st.success(f"일괄 변환 완료! {len(records_info)}건 처리됨")
+                                time.sleep(1); st.cache_data.clear(); st.rerun()
 
     with t2:
         st.subheader("📥 원자재 입고 이력 조회 및 취소")
