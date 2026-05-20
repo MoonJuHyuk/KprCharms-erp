@@ -86,7 +86,7 @@ def get_all_sheets():
                 ws = d.add_worksheet(title=name, rows="1000", cols="20")
                 ws.append_row(headers)
                 if name == 'Config':
-                    ws.append_row(['app_password', 'kpr1234'])
+                    pass  # 비밀번호는 스프레드시트 Config 시트에서 직접 관리
             except Exception:
                 ws = None
         result.append(ws)
@@ -259,7 +259,7 @@ with st.sidebar:
     else: st.header("🏭 KPR / Chamstek")
     if st.button("🔄 새로고침"): st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
     st.markdown("---")
-    menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "📋 재고실사", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색", "🌊 환경/폐수 일지", "📋 주간 회의 & 개선사항"])
+    menu = st.radio("메뉴", ["대시보드", "재고/생산 관리", "영업/출고 관리", "📋 재고실사", "🏭 현장 작업 (LOT 입력)", "🔍 이력/LOT 검색", "🌊 환경/폐수 일지", "📋 주간 회의 & 개선사항", "🗂️ 품목 관리"])
     st.markdown("---")
     date = st.date_input("날짜", datetime.datetime.now())
     time_str = datetime.datetime.now().strftime("%H:%M:%S")
@@ -1893,3 +1893,312 @@ elif menu == "🔍 이력/LOT 검색":
                         st.info("해당 주문의 출고 로그가 없습니다. (아직 출고 전이거나 LOT 입력 전)")
                 else:
                     st.info("로그 데이터가 없습니다.")
+
+# [품목 관리]
+elif menu == "🗂️ 품목 관리":
+    st.title("🗂️ 품목 관리")
+
+    GUBUN_OPTS = ["제품", "완제품", "반제품", "원자재"]
+
+    def _item_col_idx(headers, name):
+        """헤더 리스트에서 컬럼 이름의 0-based 인덱스 반환. 없으면 None."""
+        return headers.index(name) if name in headers else None
+
+    def _col_letter(idx_0based):
+        """0-based 인덱스 → 컬럼 문자 (0→A, 1→B, ...)"""
+        return chr(65 + idx_0based)
+
+    def propagate_item_change(old_code, new_code, new_name, new_spec, new_type, new_color):
+        """아이템 수정 시 Logs / Orders / Inventory 전체 반영."""
+        errors = []
+
+        # ── Logs: 코드=E(idx4), 품목명=F(idx5) ──────────────────────────────
+        try:
+            if sheet_logs:
+                vals = sheet_logs.get_all_values()
+                updates = []
+                for i, r in enumerate(vals[1:], start=2):
+                    if len(r) >= 5 and str(r[4]) == str(old_code):
+                        updates += [
+                            {'range': f'E{i}', 'values': [[new_code]]},
+                            {'range': f'F{i}', 'values': [[new_name]]},
+                        ]
+                if updates:
+                    sheet_logs.batch_update(updates)
+        except Exception as e:
+            errors.append(f"생산/출고 이력: {e}")
+
+        # ── Orders: 코드=D(idx3), 품목명=E(idx4) ────────────────────────────
+        try:
+            if sheet_orders:
+                vals = sheet_orders.get_all_values()
+                updates = []
+                for i, r in enumerate(vals[1:], start=2):
+                    if len(r) >= 4 and str(r[3]) == str(old_code):
+                        updates += [
+                            {'range': f'D{i}', 'values': [[new_code]]},
+                            {'range': f'E{i}', 'values': [[new_name]]},
+                        ]
+                if updates:
+                    sheet_orders.batch_update(updates)
+        except Exception as e:
+            errors.append(f"주문: {e}")
+
+        # ── Inventory: 코드=B(idx1), 품목명=C(idx2), 규격=D(idx3), 타입=E(idx4), 색상=F(idx5) ──
+        try:
+            if sheet_inventory:
+                vals = sheet_inventory.get_all_values()
+                updates = []
+                for i, r in enumerate(vals[1:], start=2):
+                    if len(r) >= 2 and str(r[1]) == str(old_code):
+                        updates += [
+                            {'range': f'B{i}', 'values': [[new_code]]},
+                            {'range': f'C{i}', 'values': [[new_name]]},
+                            {'range': f'D{i}', 'values': [[new_spec]]},
+                            {'range': f'E{i}', 'values': [[new_type]]},
+                            {'range': f'F{i}', 'values': [[new_color]]},
+                        ]
+                if updates:
+                    sheet_inventory.batch_update(updates)
+        except Exception as e:
+            errors.append(f"재고: {e}")
+
+        return errors
+
+    tab_add, tab_edit, tab_bom = st.tabs(["➕ 품목 추가", "✏️ 품목 수정 / 삭제", "🔩 BOM 관리 (반제품 구성)"])
+
+    # ── 품목 추가 ────────────────────────────────────────────────────────────
+    with tab_add:
+        st.subheader("새 품목 등록")
+        a1, a2 = st.columns(2)
+        new_code  = a1.text_input("코드",  placeholder="예: KG030")
+        new_name  = a2.text_input("품목명", placeholder="예: KG030")
+        b1, b2 = st.columns(2)
+        new_spec  = b1.text_input("규격",  placeholder="예: 0.3")
+        new_gubun = b2.selectbox("구분", GUBUN_OPTS)
+        c1, c2 = st.columns(2)
+        new_type  = c1.text_input("타입",  placeholder="예: 원통")
+        new_color = c2.text_input("색상",  placeholder="예: 흑색")
+        new_unit  = st.text_input("단위", value="kg")
+
+        if st.button("품목 추가", type="primary", key="btn_add"):
+            if not new_code.strip() or not new_name.strip():
+                st.error("코드와 품목명은 필수입니다.")
+            elif not df_items.empty and new_code.strip() in df_items['코드'].astype(str).values:
+                st.error(f"코드 '{new_code}'가 이미 존재합니다.")
+            else:
+                try:
+                    headers = sheet_items.row_values(1)
+                    row_dict = {
+                        '코드': new_code.strip(), '품목명': new_name.strip(),
+                        '규격': new_spec.strip(), '타입': new_type.strip(),
+                        '색상': new_color.strip(), '구분': new_gubun, '단위': new_unit.strip(),
+                    }
+                    new_row = [row_dict.get(h, '') for h in headers]
+                    sheet_items.append_row(new_row)
+                    st.cache_data.clear()
+                    st.success(f"품목 '{new_code}' ({new_name}) 추가 완료!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"오류: {e}")
+
+    # ── 품목 수정 / 삭제 ─────────────────────────────────────────────────────
+    with tab_edit:
+        st.subheader("품목 수정 / 삭제")
+
+        if df_items.empty:
+            st.warning("등록된 품목이 없습니다.")
+        else:
+            srch = st.text_input("코드 또는 품목명으로 검색", key="item_srch")
+            df_show = df_items.copy()
+            for c in df_show.columns:
+                df_show[c] = df_show[c].astype(str)
+            if srch:
+                m = df_show['코드'].str.contains(srch, case=False) | df_show['품목명'].str.contains(srch, case=False)
+                df_show = df_show[m]
+
+            disp_cols = [c for c in ['코드', '품목명', '규격', '타입', '색상', '구분', '단위'] if c in df_show.columns]
+            st.dataframe(df_show[disp_cols].reset_index(drop=True), use_container_width=True, hide_index=True)
+
+            code_list = df_show['코드'].tolist()
+            if not code_list:
+                st.info("검색 결과가 없습니다.")
+            else:
+                def _fmt(c):
+                    nm = df_items.loc[df_items['코드'].astype(str)==c, '품목명']
+                    return f"{c}  |  {nm.iloc[0] if not nm.empty else ''}"
+
+                sel = st.selectbox("수정 / 삭제할 품목 선택", code_list, format_func=_fmt, key="item_sel")
+                row = df_items[df_items['코드'].astype(str) == str(sel)].iloc[0]
+
+                st.markdown("---")
+                # key에 sel 포함 → 선택이 바뀌면 위젯이 새로 생성되어 값이 자동 갱신
+                e1, e2 = st.columns(2)
+                e_code  = e1.text_input("코드",  value=str(row.get('코드',  '')), key=f"ec_{sel}")
+                e_name  = e2.text_input("품목명", value=str(row.get('품목명', '')), key=f"en_{sel}")
+                f1, f2 = st.columns(2)
+                e_spec  = f1.text_input("규격",  value=str(row.get('규격',  '')), key=f"es_{sel}")
+                cur_gubun = str(row.get('구분', '제품'))
+                g_idx = GUBUN_OPTS.index(cur_gubun) if cur_gubun in GUBUN_OPTS else 0
+                e_gubun = f2.selectbox("구분", GUBUN_OPTS, index=g_idx, key=f"eg_{sel}")
+                g1, g2 = st.columns(2)
+                e_type  = g1.text_input("타입",  value=str(row.get('타입',  '')), key=f"et_{sel}")
+                e_color = g2.text_input("색상",  value=str(row.get('색상',  '')), key=f"ecl_{sel}")
+                e_unit  = st.text_input("단위",  value=str(row.get('단위',  'kg')), key=f"eu_{sel}")
+
+                old_code = str(sel)
+                btn1, btn2 = st.columns([3, 1])
+
+                # 수정 저장
+                with btn1:
+                    if st.button("💾 수정 저장  (생산·출고·재고 전체 반영)", type="primary", key="btn_save"):
+                        if not e_code.strip() or not e_name.strip():
+                            st.error("코드와 품목명은 필수입니다.")
+                        else:
+                            try:
+                                with st.spinner("수정 중... (시트가 많을 경우 수십 초 소요될 수 있습니다)"):
+                                    # 1. Items 시트 업데이트
+                                    all_vals = sheet_items.get_all_values()
+                                    headers  = all_vals[0]
+                                    field_map = {
+                                        '코드': e_code.strip(), '품목명': e_name.strip(),
+                                        '규격': e_spec.strip(), '타입': e_type.strip(),
+                                        '색상': e_color.strip(), '구분': e_gubun, '단위': e_unit.strip(),
+                                    }
+                                    item_updates = []
+                                    for i, r in enumerate(all_vals[1:], start=2):
+                                        if r and str(r[0]) == old_code:
+                                            for col_i, h in enumerate(headers):
+                                                if h in field_map:
+                                                    item_updates.append({'range': f'{_col_letter(col_i)}{i}', 'values': [[field_map[h]]]})
+                                            break
+                                    if item_updates:
+                                        sheet_items.batch_update(item_updates)
+
+                                    # 2. 나머지 시트 전체 반영
+                                    errs = propagate_item_change(old_code, e_code.strip(), e_name.strip(), e_spec.strip(), e_type.strip(), e_color.strip())
+
+                                st.cache_data.clear()
+                                if errs:
+                                    st.warning("일부 시트 업데이트 오류:\n" + "\n".join(errs))
+                                else:
+                                    st.success(f"수정 완료! 생산·출고 이력 / 주문 / 재고 전체 반영됨.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"오류: {e}")
+
+                # 삭제
+                with btn2:
+                    if st.button("🗑️ 삭제", key="btn_del"):
+                        st.session_state['confirm_del_code'] = old_code
+
+                if st.session_state.get('confirm_del_code') == old_code:
+                    used = (not df_logs.empty and '코드' in df_logs.columns and
+                            (df_logs['코드'].astype(str) == old_code).any())
+                    if used:
+                        st.warning(f"⚠️ '{old_code}'은 생산/출고 이력에 사용 중입니다. 품목 마스터에서만 삭제됩니다 (이력은 유지).")
+                    if st.checkbox("삭제를 확인합니다", key="del_ck"):
+                        try:
+                            all_vals = sheet_items.get_all_values()
+                            for i, r in enumerate(all_vals[1:], start=2):
+                                if r and str(r[0]) == old_code:
+                                    sheet_items.delete_rows(i)
+                                    break
+                            st.session_state.pop('confirm_del_code', None)
+                            st.cache_data.clear()
+                            st.success("삭제 완료")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"오류: {e}")
+
+    # ── BOM 관리 ─────────────────────────────────────────────────────────────
+    with tab_bom:
+        st.subheader("🔩 BOM 관리 (제품별 반제품/원자재 구성)")
+        st.caption("생산 시 자동으로 차감될 반제품·원자재를 제품별로 등록합니다.")
+
+        if df_items.empty:
+            st.warning("등록된 품목이 없습니다.")
+        else:
+            # 제품 선택 (제품/완제품만)
+            df_prod = df_items[df_items['구분'].isin(['제품', '완제품'])].copy()
+            if df_prod.empty:
+                st.warning("제품/완제품으로 등록된 품목이 없습니다. 먼저 품목 추가 탭에서 등록해주세요.")
+            else:
+                df_prod['Disp'] = df_prod['코드'].astype(str) + "  |  " + df_prod['품목명'].astype(str) + "  (" + df_prod['규격'].astype(str) + ")"
+                bom_sel_prod = st.selectbox("BOM을 설정할 제품 선택", df_prod['Disp'].tolist(), key="bom_prod_sel")
+                bom_prod_code = bom_sel_prod.split("  |  ")[0].strip()
+
+                # 현재 BOM 조회
+                st.markdown("---")
+                st.markdown(f"#### 📋 현재 BOM — **{bom_prod_code}**")
+
+                bom_for_prod = df_bom[df_bom['제품코드'].astype(str) == bom_prod_code].copy() if not df_bom.empty else pd.DataFrame()
+
+                if bom_for_prod.empty:
+                    st.info("등록된 BOM이 없습니다. 아래에서 추가하세요.")
+                else:
+                    show_bom_cols = [c for c in ['제품코드', '자재코드', '소요량', '타입'] if c in bom_for_prod.columns]
+                    st.dataframe(bom_for_prod[show_bom_cols].reset_index(drop=True), use_container_width=True, hide_index=True)
+
+                    # BOM 행 삭제
+                    st.markdown("##### ❌ BOM 항목 삭제")
+                    mat_opts = bom_for_prod['자재코드'].astype(str).tolist()
+                    del_mat = st.selectbox("삭제할 자재코드 선택", mat_opts, key="bom_del_mat")
+                    if st.button("BOM 항목 삭제", key="btn_bom_del"):
+                        try:
+                            all_bom_vals = sheet_bom.get_all_values()
+                            headers_bom = all_bom_vals[0]
+                            prod_col = headers_bom.index('제품코드') if '제품코드' in headers_bom else 0
+                            mat_col  = headers_bom.index('자재코드') if '자재코드' in headers_bom else 1
+                            rows_to_del = []
+                            for i, r in enumerate(all_bom_vals[1:], start=2):
+                                if len(r) > mat_col and str(r[prod_col]) == bom_prod_code and str(r[mat_col]) == del_mat:
+                                    rows_to_del.append(i)
+                            for row_i in reversed(rows_to_del):
+                                sheet_bom.delete_rows(row_i)
+                            st.cache_data.clear()
+                            st.success(f"자재 '{del_mat}' BOM 삭제 완료")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"오류: {e}")
+
+                # BOM 항목 추가
+                st.markdown("---")
+                st.markdown("##### ➕ BOM 항목 추가")
+                st.caption("이 제품을 1kg 생산할 때 사용되는 반제품/원자재 코드와 소요량(kg)을 입력하세요.")
+
+                # 반제품+원자재 목록
+                df_mat = df_items[df_items['구분'].isin(['반제품', '원자재'])].copy()
+                bom_c1, bom_c2, bom_c3 = st.columns(3)
+
+                if not df_mat.empty:
+                    df_mat['MatDisp'] = df_mat['코드'].astype(str) + "  |  " + df_mat['품목명'].astype(str)
+                    sel_mat_disp = bom_c1.selectbox("자재 선택 (반제품/원자재)", df_mat['MatDisp'].tolist(), key="bom_mat_sel")
+                    sel_mat_code = sel_mat_disp.split("  |  ")[0].strip()
+                else:
+                    sel_mat_code = bom_c1.text_input("자재코드 (직접 입력)", key="bom_mat_txt")
+
+                bom_qty   = bom_c2.number_input("소요량 (kg/생산1kg당)", min_value=0.0, step=0.01, format="%.4f", key="bom_qty")
+                bom_type  = bom_c3.text_input("타입 (선택, 비워도 됨)", key="bom_type", placeholder="예: 원통")
+
+                if st.button("BOM 추가", type="primary", key="btn_bom_add"):
+                    if not sel_mat_code:
+                        st.error("자재코드를 선택하거나 입력해주세요.")
+                    elif bom_qty <= 0:
+                        st.error("소요량은 0보다 커야 합니다.")
+                    else:
+                        try:
+                            bom_headers = sheet_bom.row_values(1)
+                            new_bom_dict = {
+                                '제품코드': bom_prod_code,
+                                '자재코드': sel_mat_code,
+                                '소요량': bom_qty,
+                                '타입': bom_type.strip(),
+                            }
+                            new_bom_row = [new_bom_dict.get(h, '') for h in bom_headers]
+                            sheet_bom.append_row(new_bom_row)
+                            st.cache_data.clear()
+                            st.success(f"BOM 추가 완료: {bom_prod_code} ← {sel_mat_code} ({bom_qty}kg)")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"오류: {e}")
