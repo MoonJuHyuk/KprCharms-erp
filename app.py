@@ -474,7 +474,7 @@ elif menu == "재고/생산 관리":
         if cat == "생산":
             line_options = []
             if factory == "1공장": line_options = [f"압출{i}호" for i in range(1, 6)] + ["기타"]
-            elif factory == "2공장": line_options = [f"압출{i}호" for i in range(1, 7)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
+            elif factory == "2공장": line_options = [f"압출{i}호" for i in range(1, 9)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
             prod_line = st.selectbox("설비 라인", line_options)
         if not df_items.empty:
             df_f = df_items.copy()
@@ -573,7 +573,8 @@ elif menu == "재고/생산 관리":
                 c_s1, c_s2, c_s3, c_s4 = st.columns(4)
                 min_dt = pd.to_datetime(df_prod_log['날짜']).min().date() if not df_prod_log.empty else datetime.date.today()
                 sch_date = c_s1.date_input("날짜 범위", [min_dt, datetime.date.today()], key="p_date")
-                all_lines = ["전체"] + sorted(df_prod_log['라인'].unique().tolist())
+                line_master = [f"압출{i}호" for i in range(1, 9)] + [f"컷팅{i}호" for i in range(1, 11)] + ["기타"]
+                all_lines = ["전체"] + sorted(set(line_master) | set(df_prod_log['라인'].unique().tolist()))
                 sch_line = c_s2.selectbox("라인 선택", all_lines)
                 sch_code = c_s3.text_input("품목 코드/명 검색", key="p_txt")
                 sch_fac = c_s4.selectbox("공장 필터", ["전체", "1공장", "2공장"])
