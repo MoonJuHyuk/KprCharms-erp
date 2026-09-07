@@ -39,71 +39,120 @@ else:
     st.set_page_config(page_title="KPR ERP", page_icon="🏭", layout="wide")
 
 # --- 2. 구글 시트 연결 ---
+SPREADSHEET_ID = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+
 @st.cache_resource
-def get_connection():
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
+def _connect():
+    """실패하면 예외를 던진다. Streamlit은 예외가 난 결과를 캐시하지 않으므로
+    일시적인 오류(429 등)가 영구히 굳어버리지 않는다."""
     try:
         if "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
-            creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
-            client = gspread.authorize(creds)
-            return client.open_by_key(spreadsheet_id)
-    except Exception: pass
-    key_file = 'key.json'
-    if os.path.exists(key_file):
-        creds = Credentials.from_service_account_file(key_file, scopes=scopes)
-        client = gspread.authorize(creds)
-        return client.open_by_key(spreadsheet_id)
-    return None
+            creds = Credentials.from_service_account_info(key_dict, scopes=SCOPES)
+            return gspread.authorize(creds).open_by_key(SPREADSHEET_ID)
+    except Exception:
+        pass
+    if os.path.exists('key.json'):
+        creds = Credentials.from_service_account_file('key.json', scopes=SCOPES)
+        return gspread.authorize(creds).open_by_key(SPREADSHEET_ID)
+    raise RuntimeError("구글 시트 연결 실패: 사용 가능한 인증 정보가 없습니다")
+
+def get_connection():
+    try:
+        return _connect()
+    except Exception:
+        return None
 
 doc = get_connection()
 
+def diagnose_connection():
+    """로그인 실패 원인 진단용. 캐시를 쓰지 않고 연결을 실제로 다시 시도한다."""
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    spreadsheet_id = "1qLWcLwS-aTBPeCn39h0bobuZlpyepfY5Hqn-hsP-hvk"
+    out = []
+    has_secret = False
+    try:
+        has_secret = "gcp_service_account" in st.secrets
+    except Exception as e:
+        out.append(f"st.secrets 접근 실패 -> {type(e).__name__}: {e}")
+    out.append(f"Secrets에 [gcp_service_account] 있음 : {has_secret}")
+    if has_secret:
+        try:
+            key_dict = dict(st.secrets["gcp_service_account"])
+            pk = str(key_dict.get('private_key', ''))
+            out.append(f"  항목 수        : {len(key_dict)}")
+            out.append(f"  client_email   : {key_dict.get('client_email', '(없음)')}")
+            out.append(f"  private_key    : {len(pk)}자, 줄바꿈 {pk.count(chr(10))}개")
+            creds = Credentials.from_service_account_info(key_dict, scopes=scopes)
+            out.append("  인증서 생성    : OK")
+            gspread.authorize(creds).open_by_key(spreadsheet_id)
+            out.append("  스프레드시트   : OK")
+        except Exception as e:
+            out.append(f"  실패 -> {type(e).__name__}: {e}")
+    out.append(f"key.json 파일 있음 : {os.path.exists('key.json')}")
+    return out
+
+SHEET_NAMES = ['Items', 'Inventory', 'Logs', 'BOM', 'Orders', 'Wastewater', 'Meetings', 'Config']
+NEW_SHEET_HEADERS = {
+    'Wastewater': ['날짜', '대표자', '환경기술인', '가동시간', '플라스틱재생칩', '합성수지', '안료', '용수사용량', '폐수발생량', '위탁량', '기타'],
+    'Meetings': ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고'],
+    'Config': ['key', 'value'],
+}
+
 @st.cache_resource
-def get_all_sheets():
-    d = get_connection()
-    if d is None:
-        return (None,) * 8
-    ww_h = ['날짜', '대표자', '환경기술인', '가동시간', '플라스틱재생칩', '합성수지', '안료', '용수사용량', '폐수발생량', '위탁량', '기타']
-    mtg_h = ['ID', '작성일', '공장', '안건내용', '담당자', '상태', '비고']
-    cfg_h = ['key', 'value']
-    configs = [
-        ('Items', None), ('Inventory', None), ('Logs', None), ('BOM', None), ('Orders', None),
-        ('Wastewater', ww_h), ('Meetings', mtg_h), ('Config', cfg_h),
-    ]
+def _load_sheets():
+    d = _connect()
+    ws_map, last_err = {}, None
+    for attempt in range(3):
+        try:
+            ws_map = {w.title: w for w in d.worksheets()}  # API 호출 1회 (기존 8회)
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(2 * (2 ** attempt))  # 429는 '분당' 할당량이므로 2초, 4초로 대기
+    if not ws_map:
+        # 예외를 던져 실패가 캐시되지 않게 한다 -> 다음 조작 때 자동 재시도
+        raise RuntimeError(f"워크시트 목록 조회 실패: {last_err}")
+
     result = []
-    for name, headers in configs:
-        ws = None
-        for attempt in range(3):
-            try:
-                ws = d.worksheet(name)
-                break
-            except Exception:
-                if attempt < 2:
-                    time.sleep(1)
-        if ws is None and headers:
+    for name in SHEET_NAMES:
+        ws = ws_map.get(name)
+        if ws is None and name in NEW_SHEET_HEADERS:
             try:
                 ws = d.add_worksheet(title=name, rows="1000", cols="20")
-                ws.append_row(headers)
-                if name == 'Config':
-                    pass  # 비밀번호는 스프레드시트 Config 시트에서 직접 관리
+                ws.append_row(NEW_SHEET_HEADERS[name])
             except Exception:
                 ws = None
         result.append(ws)
     return tuple(result)
 
+def get_all_sheets():
+    try:
+        return _load_sheets()
+    except Exception:
+        return (None,) * 8
+
 sheet_items, sheet_inventory, sheet_logs, sheet_bom, sheet_orders, sheet_wastewater, sheet_meetings, sheet_config = get_all_sheets()
 
 def get_app_password():
+    """(암호, 출처) 반환. 출처가 None이면 설정 자체를 불러오지 못한 것."""
     if sheet_config:
         try:
             records = sheet_config.get_all_records()
             for row in records:
-                if row.get('key') == 'app_password':
-                    return str(row.get('value', ''))
+                if str(row.get('key', '')).strip() == 'app_password':
+                    return str(row.get('value', '')).strip(), 'Config 시트'
         except Exception:
             pass
-    return ''
+    try:
+        v = st.secrets.get('app_password')
+        if v:
+            return str(v).strip(), 'Secrets'
+    except Exception:
+        pass
+    return '', None
 
 # --- 3. 데이터 로딩 ---
 @st.cache_data(ttl=60)
@@ -243,11 +292,24 @@ if not st.session_state["authenticated"]:
     st.title("🔒 KPR ERP 시스템")
     c1, c2 = st.columns([1, 2])
     with c1:
+        real_pwd, pwd_src = get_app_password()
+        if pwd_src is None:
+            st.error("⚠️ 접속 암호 설정을 불러오지 못했습니다. (구글 시트 연결 실패)")
+            st.caption(
+                "Streamlit Cloud → Settings → Secrets 에 [gcp_service_account] 항목이 "
+                "등록돼 있는지, 해당 서비스 계정 이메일이 스프레드시트에 공유돼 있는지 확인하세요."
+            )
         pwd_input = st.text_input("접속 암호", type="password")
-        if st.button("로그인", type="primary"):
-            if pwd_input == get_app_password():
+        if st.button("로그인", type="primary", disabled=(pwd_src is None)):
+            if real_pwd and pwd_input.strip() == real_pwd:
                 st.session_state["authenticated"] = True; st.rerun()
-            else: st.error("암호가 틀렸습니다.")
+            else:
+                st.error("암호가 틀렸습니다.")
+        if st.button("🔄 연결 다시 시도"):
+            st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
+        if pwd_src is None:
+            with st.expander("🔧 연결 진단 (원인 확인용)"):
+                st.code(chr(10).join(diagnose_connection()), language="text")
     st.stop()
 
 df_items, df_inventory, df_logs, df_bom, df_orders, df_wastewater, df_meetings, df_mapping = load_data()
